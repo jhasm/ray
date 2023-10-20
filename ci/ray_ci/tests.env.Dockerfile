@@ -8,6 +8,8 @@ ARG BUILD_TYPE
 ENV CC=clang
 ENV CXX=clang++-12
 
+SHELL ["/bin/bash", "-ice"]
+
 RUN mkdir /rayci
 WORKDIR /rayci
 COPY . .
