@@ -401,8 +401,15 @@ RAY_CONFIG(uint32_t, maximum_gcs_dead_node_cached_count, 1000)
 RAY_CONFIG(int, gcs_resource_report_poll_period_ms, 100)
 // The number of concurrent polls to polls to GCS.
 RAY_CONFIG(uint64_t, gcs_max_concurrent_resource_pulls, 100)
-// The storage backend to use for the GCS. It can be either 'redis' or 'memory'.
+// The storage backend to use for the GCS. One of: 'redis', 'memory',
+// 'rocksdb'. The 'rocksdb' value enables the embedded storage backend
+// proposed in REP-64 (rep-64-poc/PLAN.md) and requires
+// `gcs_storage_path` to be set to a directory on a persistent volume.
 RAY_CONFIG(std::string, gcs_storage, "memory")
+// Filesystem path for the GCS storage backend, when `gcs_storage` is
+// 'rocksdb'. Must point to a directory on a persistent volume that
+// survives head-pod restarts. Ignored for 'redis' / 'memory' backends.
+RAY_CONFIG(std::string, gcs_storage_path, "")
 
 /// Duration to sleep after failing to put an object in plasma because it is full.
 RAY_CONFIG(uint32_t, object_store_full_delay_ms, 10)

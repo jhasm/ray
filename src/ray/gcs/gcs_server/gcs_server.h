@@ -105,10 +105,14 @@ class GcsServer {
     UNKNOWN = 0,
     IN_MEMORY = 1,
     REDIS_PERSIST = 2,
+    // Embedded RocksDB on a local persistent volume — REP-64 POC
+    // (rep-64-poc/PLAN.md). Requires `gcs_storage_path` to be set.
+    ROCKSDB_PERSIST = 3,
   };
 
   static constexpr char kInMemoryStorage[] = "memory";
   static constexpr char kRedisStorage[] = "redis";
+  static constexpr char kRocksDbStorage[] = "rocksdb";
 
  protected:
   /// Generate the redis client options

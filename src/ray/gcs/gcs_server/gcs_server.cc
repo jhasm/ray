@@ -31,6 +31,7 @@
 #include "ray/gcs/gcs_server/runtime_env_handler.h"
 #include "ray/gcs/gcs_server/store_client_kv.h"
 #include "ray/gcs/store_client/observable_store_client.h"
+#include "ray/gcs/store_client/rocksdb_store_client.h"
 #include "ray/pubsub/publisher.h"
 #include "ray/util/util.h"
 
@@ -536,6 +537,12 @@ GcsServer::StorageType GcsServer::GetStorageType() const {
     RAY_CHECK(!config_.redis_address.empty());
     return StorageType::REDIS_PERSIST;
   }
+  if (RayConfig::instance().gcs_storage() == kRocksDbStorage) {
+    RAY_CHECK(!RayConfig::instance().gcs_storage_path().empty())
+        << "RAY_GCS_STORAGE=rocksdb requires RAY_GCS_STORAGE_PATH to point at "
+           "a directory on a persistent volume.";
+    return StorageType::ROCKSDB_PERSIST;
+  }
   RAY_LOG(FATAL) << "Unsupported GCS storage type: "
                  << RayConfig::instance().gcs_storage();
   return StorageType::UNKNOWN;
@@ -577,6 +584,13 @@ void GcsServer::InitKVManager() {
     instance =
         std::make_unique<StoreClientInternalKV>(std::make_unique<ObservableStoreClient>(
             std::make_unique<InMemoryStoreClient>(main_service_)));
+    break;
+  case (StorageType::ROCKSDB_PERSIST):
+    instance = std::make_unique<StoreClientInternalKV>(
+        std::make_unique<ObservableStoreClient>(std::make_unique<RocksDbStoreClient>(
+            main_service_,
+            RayConfig::instance().gcs_storage_path(),
+            GetClusterId().Hex())));
     break;
   default:
     RAY_LOG(FATAL) << "Unexpected storage type! " << storage_type_;
