@@ -271,57 +271,179 @@ int RocksDbStoreClient::GetNextJobID() {
   return job_id_;
 }
 
-// ---- Stubs until Phase 6. -------------------------------------------------
+// ---- Phase 6: full StoreClient API surface. -------------------------------
+// All methods mirror the Phase 3 dispatch pattern: do RocksDB work
+// synchronously (AsyncPut already blocks on the WAL fsync because
+// SyncWriteOptions sets sync=true), then post the callback onto
+// main_io_service_ so callers see consistent async semantics.
 
 Status RocksDbStoreClient::AsyncGetAll(
-    const std::string & /*table_name*/,
-    const MapCallback<std::string, std::string> & /*callback*/) {
-  RAY_CHECK(false) << "RocksDbStoreClient::AsyncGetAll is not implemented in "
-                      "Phase 3 (REP-64 POC). Phase 6 fills this out.";
-  return Status::NotImplemented("AsyncGetAll");
+    const std::string &table_name,
+    const MapCallback<std::string, std::string> &callback) {
+  RAY_CHECK(callback != nullptr);
+  auto *cf = GetOrCreateColumnFamily(table_name);
+
+  rocksdb::ReadOptions read_opts;
+  read_opts.total_order_seek = true;  // ignore prefix-extractor for full scan
+  std::unique_ptr<rocksdb::Iterator> it(db_->NewIterator(read_opts, cf));
+
+  absl::flat_hash_map<std::string, std::string> result;
+  for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    result.emplace(it->key().ToString(), it->value().ToString());
+  }
+  RAY_CHECK(it->status().ok())
+      << "RocksDB iterator failed during GetAll: " << it->status().ToString();
+
+  main_io_service_.post(
+      [callback, r = std::move(result)]() mutable { callback(std::move(r)); },
+      "GcsRocksDb.GetAll");
+  return Status::OK();
 }
 
 Status RocksDbStoreClient::AsyncMultiGet(
-    const std::string & /*table_name*/,
-    const std::vector<std::string> & /*keys*/,
-    const MapCallback<std::string, std::string> & /*callback*/) {
-  RAY_CHECK(false) << "RocksDbStoreClient::AsyncMultiGet is not implemented in "
-                      "Phase 3 (REP-64 POC). Phase 6 fills this out.";
-  return Status::NotImplemented("AsyncMultiGet");
+    const std::string &table_name,
+    const std::vector<std::string> &keys,
+    const MapCallback<std::string, std::string> &callback) {
+  RAY_CHECK(callback != nullptr);
+  absl::flat_hash_map<std::string, std::string> result;
+  if (keys.empty()) {
+    main_io_service_.post(
+        [callback, r = std::move(result)]() mutable { callback(std::move(r)); },
+        "GcsRocksDb.MultiGet");
+    return Status::OK();
+  }
+
+  auto *cf = GetOrCreateColumnFamily(table_name);
+  std::vector<rocksdb::ColumnFamilyHandle *> cfs(keys.size(), cf);
+  std::vector<rocksdb::Slice> key_slices;
+  key_slices.reserve(keys.size());
+  for (const auto &k : keys) key_slices.emplace_back(k);
+
+  std::vector<std::string> values;
+  std::vector<rocksdb::Status> statuses =
+      db_->MultiGet(rocksdb::ReadOptions(), cfs, key_slices, &values);
+  RAY_CHECK_EQ(statuses.size(), keys.size());
+
+  for (size_t i = 0; i < keys.size(); ++i) {
+    if (statuses[i].ok()) {
+      result.emplace(keys[i], std::move(values[i]));
+    } else if (!statuses[i].IsNotFound()) {
+      RAY_LOG(FATAL) << "RocksDB MultiGet failed for key=" << keys[i] << ": "
+                     << statuses[i].ToString();
+    }
+    // NotFound: simply omit from the map, mirroring Redis MGET semantics.
+  }
+
+  main_io_service_.post(
+      [callback, r = std::move(result)]() mutable { callback(std::move(r)); },
+      "GcsRocksDb.MultiGet");
+  return Status::OK();
 }
 
-Status RocksDbStoreClient::AsyncDelete(const std::string & /*table_name*/,
-                                       const std::string & /*key*/,
-                                       std::function<void(bool)> /*callback*/) {
-  RAY_CHECK(false) << "RocksDbStoreClient::AsyncDelete is not implemented in "
-                      "Phase 3 (REP-64 POC). Phase 6 fills this out.";
-  return Status::NotImplemented("AsyncDelete");
+Status RocksDbStoreClient::AsyncDelete(const std::string &table_name,
+                                       const std::string &key,
+                                       std::function<void(bool)> callback) {
+  auto *cf = GetOrCreateColumnFamily(table_name);
+
+  // Determine prior existence so the callback's bool is "did this delete
+  // remove an existing entry" — same contract as InMemoryStoreClient.
+  std::string existing;
+  auto get_status = db_->Get(rocksdb::ReadOptions(), cf, key, &existing);
+  bool existed = get_status.ok();
+  if (!existed && !get_status.IsNotFound()) {
+    RAY_LOG(FATAL) << "RocksDB Get during Delete failed: "
+                   << get_status.ToString();
+  }
+
+  auto del_status = db_->Delete(SyncWriteOptions(), cf, key);
+  RAY_CHECK(del_status.ok()) << "RocksDB Delete failed for table=" << table_name
+                             << " key=" << key << ": "
+                             << del_status.ToString();
+
+  if (callback) {
+    main_io_service_.post([callback, existed]() { callback(existed); },
+                          "GcsRocksDb.Delete");
+  }
+  return Status::OK();
 }
 
 Status RocksDbStoreClient::AsyncBatchDelete(
-    const std::string & /*table_name*/,
-    const std::vector<std::string> & /*keys*/,
-    std::function<void(int64_t)> /*callback*/) {
-  RAY_CHECK(false) << "RocksDbStoreClient::AsyncBatchDelete is not implemented in "
-                      "Phase 3 (REP-64 POC). Phase 6 fills this out.";
-  return Status::NotImplemented("AsyncBatchDelete");
+    const std::string &table_name,
+    const std::vector<std::string> &keys,
+    std::function<void(int64_t)> callback) {
+  auto *cf = GetOrCreateColumnFamily(table_name);
+
+  // Count how many of the requested keys actually exist before delete,
+  // so the callback's int64_t is "how many real deletions happened",
+  // mirroring Redis DEL semantics. For the POC's expected workload sizes
+  // (≤ a few thousand keys per call) the per-key Get is cheap; a more
+  // efficient implementation could use MultiGet here.
+  rocksdb::WriteBatch batch;
+  int64_t deleted_count = 0;
+  for (const auto &k : keys) {
+    std::string v;
+    auto gs = db_->Get(rocksdb::ReadOptions(), cf, k, &v);
+    if (gs.ok()) {
+      ++deleted_count;
+    } else if (!gs.IsNotFound()) {
+      RAY_LOG(FATAL) << "RocksDB Get during BatchDelete failed for key=" << k
+                     << ": " << gs.ToString();
+    }
+    auto bs = batch.Delete(cf, k);
+    RAY_CHECK(bs.ok()) << "WriteBatch Delete failed: " << bs.ToString();
+  }
+  auto write_status = db_->Write(SyncWriteOptions(), &batch);
+  RAY_CHECK(write_status.ok())
+      << "RocksDB BatchDelete write failed: " << write_status.ToString();
+
+  if (callback) {
+    main_io_service_.post([callback, deleted_count]() { callback(deleted_count); },
+                          "GcsRocksDb.BatchDelete");
+  }
+  return Status::OK();
 }
 
 Status RocksDbStoreClient::AsyncGetKeys(
-    const std::string & /*table_name*/,
-    const std::string & /*prefix*/,
-    std::function<void(std::vector<std::string>)> /*callback*/) {
-  RAY_CHECK(false) << "RocksDbStoreClient::AsyncGetKeys is not implemented in "
-                      "Phase 3 (REP-64 POC). Phase 6 fills this out.";
-  return Status::NotImplemented("AsyncGetKeys");
+    const std::string &table_name,
+    const std::string &prefix,
+    std::function<void(std::vector<std::string>)> callback) {
+  RAY_CHECK(callback != nullptr);
+  auto *cf = GetOrCreateColumnFamily(table_name);
+
+  // Prefix scan: Seek to the prefix and walk forward while keys still
+  // share the prefix. RocksDB's iterator is byte-ordered, so once a key
+  // does not start with `prefix` no later key can either.
+  std::unique_ptr<rocksdb::Iterator> it(db_->NewIterator(rocksdb::ReadOptions(), cf));
+  std::vector<std::string> result;
+  for (it->Seek(prefix); it->Valid(); it->Next()) {
+    if (!it->key().starts_with(rocksdb::Slice(prefix))) break;
+    result.emplace_back(it->key().ToString());
+  }
+  RAY_CHECK(it->status().ok())
+      << "RocksDB iterator failed during GetKeys: " << it->status().ToString();
+
+  main_io_service_.post(
+      [callback, r = std::move(result)]() mutable { callback(std::move(r)); },
+      "GcsRocksDb.GetKeys");
+  return Status::OK();
 }
 
-Status RocksDbStoreClient::AsyncExists(const std::string & /*table_name*/,
-                                       const std::string & /*key*/,
-                                       std::function<void(bool)> /*callback*/) {
-  RAY_CHECK(false) << "RocksDbStoreClient::AsyncExists is not implemented in "
-                      "Phase 3 (REP-64 POC). Phase 6 fills this out.";
-  return Status::NotImplemented("AsyncExists");
+Status RocksDbStoreClient::AsyncExists(const std::string &table_name,
+                                       const std::string &key,
+                                       std::function<void(bool)> callback) {
+  RAY_CHECK(callback != nullptr);
+  auto *cf = GetOrCreateColumnFamily(table_name);
+
+  std::string v;
+  auto status = db_->Get(rocksdb::ReadOptions(), cf, key, &v);
+  bool exists = status.ok();
+  if (!exists && !status.IsNotFound()) {
+    RAY_LOG(FATAL) << "RocksDB Get for AsyncExists failed: " << status.ToString();
+  }
+
+  main_io_service_.post([callback, exists]() { callback(exists); },
+                        "GcsRocksDb.Exists");
+  return Status::OK();
 }
 
 }  // namespace gcs

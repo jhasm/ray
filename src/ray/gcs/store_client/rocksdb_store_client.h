@@ -32,11 +32,14 @@ namespace gcs {
 /// volume. Implements the GCS fault-tolerance contract proposed in
 /// REP-64 (`enhancements/reps/2026-02-23-gcs-embedded-storage.md`).
 ///
-/// **Phase 3 (walking skeleton):** only `AsyncPut`, `AsyncGet`, and
-/// `GetNextJobID` are implemented. The remaining methods abort via
-/// `RAY_CHECK(false)` so unimplemented paths fail loudly rather than
-/// silently corrupting state during Phase 3 testing. Phase 6 fills
-/// them out and runs the full `StoreClientTestBase` suite.
+/// **Phase 3 (walking skeleton):** `AsyncPut`, `AsyncGet`, and
+/// `GetNextJobID` implemented; remaining methods stubbed.
+///
+/// **Phase 6 (API completeness):** `AsyncGetAll`, `AsyncMultiGet`,
+/// `AsyncDelete`, `AsyncBatchDelete`, `AsyncGetKeys` (prefix scan),
+/// `AsyncExists` filled in. The full `StoreClientTestBase` suite is
+/// exercised via the POC harness target
+/// `//rep-64-poc/harness/store_client_parity:rocksdb_parity_test`.
 ///
 /// **Threading.** Like `InMemoryStoreClient`, RocksDB calls are made
 /// inline on the caller thread and the user-supplied callback is
@@ -89,9 +92,7 @@ class RocksDbStoreClient : public StoreClient {
 
   int GetNextJobID() override;
 
-  // ---- Stubbed until Phase 6. ------------------------------------------
-  // Each fails loudly via RAY_CHECK(false) rather than silently
-  // returning Status::OK with empty data.
+  // ---- Implemented in Phase 6. -----------------------------------------
 
   Status AsyncGetAll(const std::string &table_name,
                      const MapCallback<std::string, std::string> &callback) override;
