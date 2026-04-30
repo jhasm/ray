@@ -176,7 +176,10 @@ def ray_deps_setup():
         name = "boost",
         build_file = "@com_github_nelhage_rules_boost//:BUILD.boost",
         sha256 = "71feeed900fbccca04a3b4f2f84a7c217186f28a940ed8b7ed4725986baf99fa",
-        url = "https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.tar.bz2",
+        # boostorg.jfrog.io serves a different archive than the SHA pinned
+        # above (their copy was rebuilt server-side); archives.boost.io is
+        # the canonical Boost mirror and matches.
+        url = "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.bz2",
     )
 
     auto_http_archive(
