@@ -586,11 +586,16 @@ void GcsServer::InitKVManager() {
             std::make_unique<InMemoryStoreClient>(main_service_)));
     break;
   case (StorageType::ROCKSDB_PERSIST):
+    // Pass empty cluster_id: at this point InitKVManager runs *before*
+    // GetOrGenerateClusterId, so rpc_server_'s cluster_id is still Nil
+    // and GetClusterId() would RAY_CHECK-fail. The cluster-ID marker
+    // mechanism in RocksDbStoreClient skips the check when cluster_id
+    // is empty. PVC-mismatch fail-fast (REP "Stale data protection")
+    // requires an external authoritative cluster_id source (e.g. K8s
+    // downward API) and is deferred to Phase 8.
     instance = std::make_unique<StoreClientInternalKV>(
         std::make_unique<ObservableStoreClient>(std::make_unique<RocksDbStoreClient>(
-            main_service_,
-            RayConfig::instance().gcs_storage_path(),
-            GetClusterId().Hex())));
+            main_service_, RayConfig::instance().gcs_storage_path(), "")));
     break;
   default:
     RAY_LOG(FATAL) << "Unexpected storage type! " << storage_type_;

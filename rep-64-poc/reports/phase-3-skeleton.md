@@ -159,14 +159,49 @@ Re-ran on the same dev VM after the Phase 2 lib-path fix and the boost URL fix l
 | JobID counter persists across process restart and is monotonic. | **Yes — JobIdMonotonicAndPersists passes.** |
 | Cluster-ID marker is written on first open and validated on subsequent opens. | **Yes at the storage layer — ClusterIdMarkerWritesOnFirstOpen passes.** Cluster-ID *plumbing into `GcsServer`* is a separate concern; see "Open items" below. |
 
-**Open items (still pending real verification):**
+**Cluster-ID timing in `GcsServer::Start()` — confirmed bug, fix landed:**
 
-- **Cluster-ID timing in `GcsServer::Start()`.** The unit test exercises the marker code path with a known-good `cluster_id` string, so the *storage* layer is proven; what isn't yet verified is whether `GetClusterId().Hex()` is non-empty at the moment `InitKVManager()` is called. Building `//:gcs_server` (next iteration) is the simplest way to surface this. If empty, defer the marker check or pull the cluster ID from a different source.
+Static analysis of `gcs_server.cc:141-152` and `grpc_server.h:132-134` confirmed the suspected runtime crash:
+
+```cpp
+void GcsServer::Start() {
+  ...
+  InitKVManager();                                // RocksDbStoreClient constructed here
+  gcs_init_data->AsyncLoad([this, gcs_init_data] {
+    GetOrGenerateClusterId([this, gcs_init_data](ClusterID cluster_id) {
+      rpc_server_.SetClusterId(cluster_id);       // cluster_id set HERE — too late
+      DoStart(*gcs_init_data);
+    });
+  });
+}
+
+// In rpc/grpc_server.h:
+const ClusterID &GetClusterId() const {
+  RAY_CHECK(!cluster_id_.IsNil()) << "Cannot fetch cluster ID before it is set.";
+  ...
+}
+```
+
+So the original `gcs_server.cc:593` `GetClusterId().Hex()` would `RAY_CHECK`-fail at every cold start with `RAY_GCS_STORAGE=rocksdb`. Unit tests didn't catch it because they construct `RocksDbStoreClient` directly, bypassing GcsServer.
+
+A second, deeper finding: the cluster-ID marker mechanism as currently designed is partially redundant with Ray's existing `kv_manager.Put("cluster", "ClusterId", …)` (gcs_server.cc:167-170). With RocksDbStoreClient as the StoreClient, that persistence already provides cross-restart cluster-ID continuity. **For PVC-mismatch fail-fast (REP "Stale data protection") to work, GcsServer needs an *external* authoritative cluster_id source — K8s downward API or env var — to compare against the persisted one. There is no such source today.** The mismatch test path is not yet wired.
+
+**Fix shipped in this iteration:** `gcs_server.cc:593` now passes `""` (empty string) instead of `GetClusterId().Hex()`. `RocksDbStoreClient::ValidateOrWriteClusterIdMarker` already handles empty cluster_id gracefully (skips both write and verify), so the storage layer is unchanged and unit tests continue to pass. The mismatch fail-fast capability is honestly deferred to Phase 8, where K8s integration provides the external authoritative cluster_id source.
+
+**Other open items:**
+
 - **End-to-end actor-survival test.** `rep-64-poc/harness/integration/test_rocksdb_recovery.py` requires a `gcs_server` binary built with this branch, then `RAY_REP64_RUN_E2E=1 pytest …`. Not yet attempted.
 - **`--config=asan-clang`.** Not attempted on this host (LLVM toolchain not installed in `~/.local/`).
-- **Mismatch fail-fast test (cluster-ID drift).** Still scoped to Phase 8 K8s-level testing where the right machinery exists.
+- **Mismatch fail-fast test (cluster-ID drift).** Re-scoped to Phase 8 K8s-level testing — needs an external authoritative cluster_id source that the current architecture lacks.
 
 **R-register update:**
 
-- **R8 (stale data on re-used PVC).** Storage-layer half: **closed yes** — marker writes on first open, accepts on reopen with same ID. Full close requires the cluster-ID-mismatch death test path (Phase 8).
-- **R3 (binary size).** Updated: `rocksdb_store_client_test` is 8.5 MB unstripped, `rocksdb_smoke_test` is 8.3 MB. The 200 KB delta is the `RocksDbStoreClient` class + its `ObservableStoreClient` wrapper + the gcs lib it links against. The full delta on `gcs_server` itself is the number that matters and is still pending.
+- **R8 (stale data on re-used PVC).** Re-scoped: the marker mechanism at the storage layer works (unit tests pass), but it cannot fail-fast on cluster mismatch in production today because the GcsServer integration has no external cluster_id to compare against. **Phase 3 partially closes R8** (storage layer correct, integration deferred). Full close requires Phase 8.
+- **R3 (binary size).** **Captured.** With the Phase 3 RocksDB code path included, `bazel-bin/gcs_server` is **32.0 MB unstripped / 24.0 MB stripped**. The smoke-test stripped binary is 6.8 MB (essentially RocksDB + gtest), so the RocksDB-only contribution to a fully-linked Ray gcs_server with dead-code elimination is in the 5–7 MB range. Well under the PLAN's 50 MB pivot trigger. (Apples-to-apples delta vs Ray master would require a separate master build; estimate stands.) `gcs_server --help` exits 0 — binary loads cleanly with the cluster-ID fix in place.
+
+**`gcs_server` build numbers:**
+
+| Run | Wall-clock | Notes |
+|---|---|---|
+| Cold build of `//:gcs_server` | 697 s (11m 37s) | 1986 actions; reused the boost + gcs lib cache from Phase 3 unit-test build, so dominated by the gcs_server-specific .cc files + final link. |
+| Incremental rebuild after cluster-ID fix | 0.6 s ("up-to-date") | The in-flight cold build had not yet started compiling `gcs_server.cc` when the edit landed, so it picked up the fix transparently. |
