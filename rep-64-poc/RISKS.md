@@ -8,14 +8,14 @@ Each risk has: **what could go wrong**, **why it matters**, **mitigation** (what
 
 | # | Risk | Phase | Status |
 |---|---|---|---|
-| R1 | RocksDB doesn't integrate cleanly into Ray's Bazel WORKSPACE | 2 | open |
-| R2 | C++ toolchain mismatch — RocksDB needs newer compiler than Ray's CI baseline | 2 | open |
-| R3 | Binary size / memory overhead from RocksDB pushes head pod over budget | 2, 7 | open |
-| R4 | `fsync` semantics on K8s persistent volumes silently violate the durability contract | 4 | open |
+| R1 | RocksDB doesn't integrate cleanly into Ray's Bazel WORKSPACE | 2 | **closed (ext4/Bazel 5.4.1/GCC 11)** — phase-2 verified |
+| R2 | C++ toolchain mismatch — RocksDB needs newer compiler than Ray's CI baseline | 2 | **closed (GCC 11)** — phase-2 verified; `--config=asan-clang` still pending |
+| R3 | Binary size / memory overhead from RocksDB pushes head pod over budget | 2, 7 | **partially closed** — gcs_server with rocksdb 32 MB unstripped / 24 MB stripped, well under PLAN's 50 MB pivot trigger; memory overhead still pending Phase 7 |
+| R4 | `fsync` semantics on K8s persistent volumes silently violate the durability contract | 4 | **partially closed (ext4)** — phase-4 kill-9 harness PASS on probe-verified honest ext4; K8s PV substrates pending Phase 8 |
 | R5 | Atomic `GetNextJobID` correctness under concurrency (Merge operator edge cases) | 5 | open |
-| R6 | RocksDB write latency with `WriteOptions::sync=true` is materially worse than REP claims | 7 | open |
+| R6 | RocksDB write latency with `WriteOptions::sync=true` is materially worse than REP claims | 7 | open — provisional data: ~1 ms/write at app layer (Phase 4 corollary), Phase 7 owns rigorous numbers |
 | R7 | Recovery time scales poorly — cold RocksDB open is slow | 8 | open |
-| R8 | Stale-data protection on shared / re-used PVCs missing or wrong → silent corruption | 3, 8 | open |
+| R8 | Stale-data protection on shared / re-used PVCs missing or wrong → silent corruption | 3, 8 | **partially closed (storage layer)** — marker mechanism unit-tested; PVC-mismatch fail-fast deferred to Phase 8 (needs external cluster_id source) |
 | R9 | REP doesn't get maintainer alignment, making the POC moot | meta | open |
 | R10 | Reproducer environment drift (image tags, kind versions, kernel) over POC's lifetime | all | open |
 | R11 | Benchmarks measure something other than what we think (warm caches, NUMA, sync stack) | 7 | open |
