@@ -163,27 +163,26 @@ void RocksDbStoreClient::ValidateOrWriteClusterIdMarker(
 
 rocksdb::ColumnFamilyHandle *RocksDbStoreClient::GetOrCreateColumnFamily(
     const std::string &table_name) {
-  {
-    absl::MutexLock lock(&cf_mutex_);
-    auto it = cf_handles_.find(table_name);
-    if (it != cf_handles_.end()) {
-      return it->second;
-    }
+  // Hold cf_mutex_ across the CreateColumnFamily call so two concurrent
+  // first-touches of the same table don't both try to create it: RocksDB
+  // serialises CreateColumnFamily internally but rejects a second
+  // create on the same name as Status::InvalidArgument, which we'd then
+  // RAY_CHECK on. The lock is only contended on the first touch per
+  // table per process; the (table_name -> handle) cache fast-path in
+  // the early return means steady-state lookups are uncontended-cheap.
+  absl::MutexLock lock(&cf_mutex_);
+  auto it = cf_handles_.find(table_name);
+  if (it != cf_handles_.end()) {
+    return it->second;
   }
-  // Create outside the lock; CreateColumnFamily can do disk I/O.
   rocksdb::ColumnFamilyHandle *new_handle = nullptr;
   auto status = db_->CreateColumnFamily(rocksdb::ColumnFamilyOptions(),
                                         table_name,
                                         &new_handle);
   RAY_CHECK(status.ok()) << "Failed to create column family '" << table_name
                          << "': " << status.ToString();
-  // Re-take the lock; another caller may have raced us.
-  absl::MutexLock lock(&cf_mutex_);
-  auto [it, inserted] = cf_handles_.emplace(table_name, new_handle);
-  if (!inserted) {
-    db_->DestroyColumnFamilyHandle(new_handle);
-  }
-  return it->second;
+  cf_handles_[table_name] = new_handle;
+  return new_handle;
 }
 
 Status RocksDbStoreClient::AsyncPut(const std::string &table_name,
