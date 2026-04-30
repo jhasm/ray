@@ -132,6 +132,17 @@ def ray_deps_setup():
         sha256 = "c8f1e1103e0b148eb8832275d8e68036f2fdd3975a1199af0e844908c56f6ea5",
     )
 
+    # RocksDB is the embedded storage backend for the GCS fault tolerance
+    # work in REP-64 (`rep-64-poc/`). Built minimally — no compression, no
+    # gflags, no shell tools — via rules_foreign_cc's cmake() rule. See
+    # bazel/BUILD.rocksdb for the cache entries.
+    auto_http_archive(
+        name = "com_github_facebook_rocksdb",
+        build_file = "@com_github_ray_project_ray//bazel:BUILD.rocksdb",
+        url = "https://github.com/facebook/rocksdb/archive/refs/tags/v9.11.2.tar.gz",
+        sha256 = "0466a3c220464410687c45930f3fa944052229c894274fddb7d821397f2b8fba",
+    )
+
     auto_http_archive(
         name = "com_github_tporadowski_redis_bin",
         build_file = "@com_github_ray_project_ray//bazel:BUILD.redis",
