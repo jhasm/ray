@@ -1,6 +1,6 @@
 # Phase 3 — Walking skeleton: minimal RocksDbStoreClient + GCS integration
 
-**Status:** code shipped + storage-layer recovery proof in place; cluster-level recovery test scaffolded but not executed (needs a Ray build with this branch).
+**Status:** code shipped, all 4 storage-layer recovery tests PASS (`bazel test //:rocksdb_store_client_test`); cluster-level (Python) recovery test scaffolded but not executed yet.
 **Branch:** `jhasm/rep-64-poc-1`
 
 ## Claim addressed
@@ -131,3 +131,42 @@ RAY_REP64_RUN_E2E=1 \
 2. Verify cluster-ID plumbing (`GetClusterId().Hex()` at `InitKVManager()` time) — if non-empty, fine; if empty, defer the marker check or pull the ID from a different source.
 3. Run `pytest rep-64-poc/harness/integration/test_rocksdb_recovery.py` end-to-end and capture the actor-survival result.
 4. Update RISKS.md with the actual close-out for R8.
+
+## Built on (2026-04-30)
+
+Re-ran on the same dev VM after the Phase 2 lib-path fix and the boost URL fix landed (commits `b043e4622d` and `07c65c84bf`).
+
+**Build:**
+- `bazel test //:rocksdb_store_client_test` cold build: **494 s** (8m 14s). 4298 actions, dominated by first-time @boost + protobuf + gRPC compilation. Subsequent rebuilds will reuse the cache.
+- Binary: `bazel-bin/rocksdb_store_client_test` = **8.5 MB** unstripped.
+
+**Test result:**
+```
+[==========] Running 4 tests from 1 test suite.
+[ RUN      ] RocksDbStoreClient.PutGetRoundtrip                  OK ( 67 ms)
+[ RUN      ] RocksDbStoreClient.RecoverAcrossReopen              OK ( 75 ms)
+[ RUN      ] RocksDbStoreClient.JobIdMonotonicAndPersists        OK ( 83 ms)
+[ RUN      ] RocksDbStoreClient.ClusterIdMarkerWritesOnFirstOpen OK ( 48 ms)
+[  PASSED  ] 4 tests. (273 ms total)
+```
+
+**What this verifies:**
+
+| Phase 3 claim | Evidence |
+|---|---|
+| `StoreClient` interface fits RocksDB cleanly for `AsyncPut` / `AsyncGet` / `GetNextJobID`. | **Yes.** Compiled, linked, ran. No interface change needed. |
+| State survives close+reopen at the storage layer. | **Yes — RecoverAcrossReopen passes.** This is the headline Phase 3 proof point that the REP claim relies on, and it now has real data. |
+| JobID counter persists across process restart and is monotonic. | **Yes — JobIdMonotonicAndPersists passes.** |
+| Cluster-ID marker is written on first open and validated on subsequent opens. | **Yes at the storage layer — ClusterIdMarkerWritesOnFirstOpen passes.** Cluster-ID *plumbing into `GcsServer`* is a separate concern; see "Open items" below. |
+
+**Open items (still pending real verification):**
+
+- **Cluster-ID timing in `GcsServer::Start()`.** The unit test exercises the marker code path with a known-good `cluster_id` string, so the *storage* layer is proven; what isn't yet verified is whether `GetClusterId().Hex()` is non-empty at the moment `InitKVManager()` is called. Building `//:gcs_server` (next iteration) is the simplest way to surface this. If empty, defer the marker check or pull the cluster ID from a different source.
+- **End-to-end actor-survival test.** `rep-64-poc/harness/integration/test_rocksdb_recovery.py` requires a `gcs_server` binary built with this branch, then `RAY_REP64_RUN_E2E=1 pytest …`. Not yet attempted.
+- **`--config=asan-clang`.** Not attempted on this host (LLVM toolchain not installed in `~/.local/`).
+- **Mismatch fail-fast test (cluster-ID drift).** Still scoped to Phase 8 K8s-level testing where the right machinery exists.
+
+**R-register update:**
+
+- **R8 (stale data on re-used PVC).** Storage-layer half: **closed yes** — marker writes on first open, accepts on reopen with same ID. Full close requires the cluster-ID-mismatch death test path (Phase 8).
+- **R3 (binary size).** Updated: `rocksdb_store_client_test` is 8.5 MB unstripped, `rocksdb_smoke_test` is 8.3 MB. The 200 KB delta is the `RocksDbStoreClient` class + its `ObservableStoreClient` wrapper + the gcs lib it links against. The full delta on `gcs_server` itself is the number that matters and is still pending.
