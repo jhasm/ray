@@ -44,18 +44,20 @@ A second environment (a real laptop SSD or a cloud VM with EBS) is required by t
 
 ### What looks suspicious in these numbers
 
-The PUT p50 of 3.87 ms is at the high end of the REP's claimed Redis range (0.5–2 ms). The natural explanation is "fsync per write is slow on this disk." A direct fsync probe contradicts that:
+The PUT p50 of 3.87 ms is at the high end of the REP's claimed Redis range (0.5–2 ms). On a real disk that's consistent with fsync-per-write being expensive; on a virtualised disk it could also reflect host-side buffering.
+
+A more thorough fsync probe (committed at `harness/durability/probe_fsync.py`) clarifies:
 
 ```
-fsync(4 KiB) on / (ext4): n=200  p50=0.7us  p99=1.2us  mean=0.7us
+fsync(4 KiB) on /tmp           (tmpfs):  p50 = 1.09 μs   → "lying" (expected — tmpfs is RAM)
+fsync(4 KiB) on /home/...    (ext4 on /dev/sda3):  p50 = 3608 μs   → "honest"
 ```
 
-Sub-microsecond `fsync` on a Hyper-V virtual disk means the host (or the virtualized block layer) is buffering writes — `fsync` returns before any physical media flush. **This is the failure mode `RISKS.md` R4 flags for K8s persistent volumes and we are seeing it here on a developer VM.**
+**Correction to an earlier reading.** During Phase 1 setup an initial fsync test was run against `/tmp/rep64-fsync-probe`, returned ≈ 0.7 μs, and was misread as "this VM's disk lies about fsync." The probe was on tmpfs, not on the underlying ext4 filesystem. The actual ext4 substrate this VM uses for `$HOME` and `/data` honours fsync at ~3.6 ms p50 — squarely in the "real flush" range. Phase 4's durability proof can therefore run on this VM (against an ext4 path, not `/tmp`), removing the cloud-VM dependency that earlier framing implied.
 
-Implications for the POC:
-- The PUT cost on this VM is not actually fsync-bound. Most of the 3.87 ms is somewhere else: redis-py + Docker bridge networking (~150 μs round-trip × 2 for command + AOF wait), Redis AOF flush mechanics (which may use stronger sync than my probe), Python loop overhead, and possibly hypervisor scheduling jitter.
-- These numbers are **not a fair representation of fsync-true durability** on a real spinning or NVMe device. They establish a "ballpark Redis-on-this-VM" reference; cross-environment comparison is essential.
-- This is a strong signal that Phase 4's durability proof must be done on substrates where fsync actually means fsync — not this VM.
+Implications for the Redis baseline numbers above:
+- The PUT cost is dominated by some combination of Redis AOF fsync (probably ~3.6 ms based on the substrate probe), container bridge networking (~150 μs RTT × ~2), and Python loop overhead.
+- This baseline is fair vs RocksDB *as long as both backends end up writing to the same ext4 substrate* with sync writes. Phase 7 will arrange that explicitly.
 
 ### What this baseline does *not* establish
 
@@ -88,6 +90,6 @@ For environments without `docker compose` (e.g., this LinkedIn VM, which has onl
 
 ## Next concrete actions before closing Phase 1
 
-1. Capture baseline on a second environment with truthful fsync (laptop SSD or cloud VM with EBS gp3).
+1. Capture baseline on a second environment for substrate diversity. The "honest fsync" requirement is now satisfied by this VM's ext4, so the second env is about diversity (different OS / hardware / cloud provider) rather than honesty: the user's MacBook (running the same Docker Compose harness, with an `F_FULLFSYNC` probe alongside) is the natural choice.
 2. Pin `redis:7.4-alpine` to the exact digest used (`sha256:9210b8dc25f122eb00e5572dcc7147c8e11fb1a08308b088e06c9d5dd2aa49d6`) in `docker-compose.yml`. Addresses R10.
 3. Optionally extend `bench.py` with a `--value-size 4096` sensitivity sweep for the read tail.
