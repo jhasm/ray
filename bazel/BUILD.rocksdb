@@ -50,6 +50,11 @@ cmake(
         "WITH_NUMA": "OFF",
         "WITH_TBB": "OFF",
 
+        # Force install to lib/ — on 64-bit Linux CMake's GNUInstallDirs
+        # picks lib64/, but macOS/BSD use lib/. Pinning to lib/ keeps the
+        # out_static_libs path portable across platforms.
+        "CMAKE_INSTALL_LIBDIR": "lib",
+
         # Other.
         "PORTABLE": "ON",
         "FAIL_ON_WARNINGS": "OFF",

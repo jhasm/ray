@@ -1,6 +1,6 @@
 # Phase 2 — Bazel + RocksDB build integration
 
-**Status:** integration code shipped; full build verification pending on a properly tooled environment.
+**Status:** integration code shipped and verified. `bazel build //:rocksdb_smoke_test` succeeds; smoke test PASSES.
 **Branch:** `jhasm/rep-64-poc-1`
 
 ## Claim addressed
@@ -102,3 +102,42 @@ sha256sum /tmp/rocksdb.tar.gz
 2. From the build output, enumerate transitive deps and confirm licenses (snappy / lz4 / zstd are off, but anything `liburing`-adjacent or kernel-layer needs to be checked).
 3. Append a "Built on" subsection to this report with the captured numbers.
 4. Pin RocksDB to a stricter version once 9.11.2 is confirmed working — e.g., bump to whatever's current on the PR-merge date and re-verify, so the POC tracks an actively maintained release.
+
+## Built on (2026-04-30)
+
+Re-ran on the same dev VM after installing `~/.local/bin/{bazel,cmake,ninja}` and bypassing the LinkedIn `/usr/local/linkedin/bin/bazel` wrapper via `PATH` ordering. Bazelisk auto-resolved Bazel **5.4.1** for Ray's WORKSPACE.
+
+**Findings during this run:**
+
+1. **`PORTABLE=ON` was already correct, but `out_static_libs = ["librocksdb.a"]` was wrong.** First two build attempts failed at the linker step with `output 'external/com_github_facebook_rocksdb/rocksdb/lib/librocksdb.a' was not created`. The sandbox child exited with code 0 (cmake/ninja finished cleanly) but the path was wrong — RocksDB's CMake `GNUInstallDirs` picks `lib64/` on x86_64 Linux. Fix: added `"CMAKE_INSTALL_LIBDIR": "lib"` to `cache_entries` so the install path is portable across Linux distros (some use `lib`, glibc-on-x86_64 uses `lib64`) and macOS / BSD (always `lib`).
+2. **Boost dep was broken upstream.** Ray's WORKSPACE pinned `https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.tar.bz2`, which now serves a different archive (SHA `1c1...`) than Ray expects (`71f...`). The bazel-mirror fallback URLs return 404. Switched to `https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.bz2` — canonical Boost mirror, matches the pinned SHA exactly. Verified manually with `curl + sha256sum`. *(This fix is not REP-64-specific; it would block any current `master` Ray build.)*
+
+**Build measurements (cold cache, after fixes):**
+
+| Step | Wall-clock |
+|---|---|
+| Bazel analysis | 1 s |
+| RocksDB cmake build (foreign_cc) | ~225 s (3:45) |
+| Link + finalize `rocksdb_smoke_test` | ~3 s |
+| **Total cold build** | **229 s** |
+| Smoke test execution (`bazel test //:rocksdb_smoke_test`) | **64 ms** |
+
+`bazel-bin/rocksdb_smoke_test` stat'd at first build:
+- Size: **8.3 MB** unstripped (`8652544` bytes), ELF64 PIE, dynamically linked. Most of this is RocksDB itself + gtest + libstdc++/libc symbols. Stripped delta will be smaller; not yet measured.
+
+**Test result:**
+```
+[==========] Running 1 test from 1 test suite.
+[ RUN      ] RocksDbSmoke.OpenPutGet
+[       OK ] RocksDbSmoke.OpenPutGet (64 ms)
+[  PASSED  ] 1 test.
+```
+
+**Open items after this run:**
+- ASAN cleanliness (`--config=asan-clang`) — not yet attempted on this host. Requires the LLVM toolchain Ray expects, which is not in `~/.local/`.
+- Binary size delta on `gcs_server` — Phase 3 territory. Captured separately once `rocksdb_store_client_test` builds.
+- Transitive dep license enumeration — `bazel query 'deps(@com_github_facebook_rocksdb//:rocksdb)'` not yet captured.
+
+**R-register update:**
+- **R1 (Bazel integration).** Closed: **"yes."** Real build green, smoke test passes against the real RocksDB.
+- **R2 (toolchain).** Closed: **"yes for GCC 11 / Bazel 5.4.1."** Pending re-confirm on `--config=asan-clang`.
