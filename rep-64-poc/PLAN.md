@@ -141,8 +141,8 @@ Each phase below lists: **claim addressed**, **deliverables**, **evidence**, **p
 **Deliverables:**
 
 - `RocksDbStoreClient` implementing only the methods needed for a basic recovery test: `AsyncPut`, `AsyncGet`, `GetNextJobID` (mutex-guarded RMW for now). Other methods stub out with `RAY_CHECK(false)` so unimplemented paths fail loudly.
-- `GcsServer::GetStorageType()` learns a third value `STORAGE_ROCKSDB` keyed off `RAY_GCS_STORAGE=rocksdb` + `RAY_GCS_STORAGE_PATH=...`. New `kRocksDbStorage` constant added.
-- One end-to-end integration test: start a single-node Ray cluster with `RAY_GCS_STORAGE=rocksdb`, create a detached actor, kill the GCS process, restart, verify the actor is recovered.
+- `GcsServer::GetStorageType()` learns a third value `STORAGE_ROCKSDB` keyed off `RAY_gcs_storage=rocksdb` + `RAY_gcs_storage_path=...`. New `kRocksDbStorage` constant added.
+- One end-to-end integration test: start a single-node Ray cluster with `RAY_gcs_storage=rocksdb`, create a detached actor, kill the GCS process, restart, verify the actor is recovered.
 - `phase-3-skeleton.md` includes a sequence diagram of the actual recovery path (compared to the REP's diagram) and notes any places the API didn't fit cleanly.
 
 **Evidence:** integration test passes; recovery is observable.
@@ -202,7 +202,7 @@ Each phase below lists: **claim addressed**, **deliverables**, **evidence**, **p
 
 - All remaining methods implemented: `AsyncGetAll`, `AsyncMultiGet`, `AsyncDelete`, `AsyncBatchDelete`, `AsyncGetKeys` (prefix scan via RocksDB iterator), `AsyncExists`.
 - `rocksdb_store_client_test.cc` extending `StoreClientTestBase` (subclass pattern, same as `redis_store_client_test.cc`). All inherited tests pass.
-- All GCS integration tests under `src/ray/gcs/gcs_server/test/` pass with `RAY_GCS_STORAGE=rocksdb` set.
+- All GCS integration tests under `src/ray/gcs/gcs_server/test/` pass with `RAY_gcs_storage=rocksdb` set.
 - A `chaos_rocksdb_store_client_test.cc` mirroring the existing chaos test (env-driven failure injection on disk operations).
 - `phase-6-api-parity.md` lists each method, the RocksDB primitive used, and any deviations in semantics.
 
@@ -242,7 +242,7 @@ Each phase below lists: **claim addressed**, **deliverables**, **evidence**, **p
 **Deliverables:**
 
 - Python harness that spawns a Ray cluster, populates state (configurable: 1k actors, 100 placement groups, 10k jobs), kills GCS, and times the recovery. Run side-by-side against Redis and RocksDB.
-- Hand-written K8s manifests (`harness/kind/`): a StatefulSet for the Ray head with a PVC mounted at `/data/gcs-state`, `RAY_GCS_STORAGE=rocksdb` env var, and a one-line `make kind-up` reproducer. Same harness produces a Redis-backed comparison setup.
+- Hand-written K8s manifests (`harness/kind/`): a StatefulSet for the Ray head with a PVC mounted at `/data/gcs-state`, `RAY_gcs_storage=rocksdb` env var, and a one-line `make kind-up` reproducer. Same harness produces a Redis-backed comparison setup.
 - Cloud fsync sanity script (`harness/cloud/`): one-shot scripts targeting EBS and GCE PD that validate the durability claim on real cloud block storage.
 - `phase-8-k8s-cloud.md` reports recovery times across substrates and includes a "head-pod failure modes table" mapping each REP-claimed failure mode to whether we observed correct recovery.
 
@@ -318,7 +318,7 @@ End-to-end checks at the close of Phase 9:
 
 1. `bazel test //src/ray/gcs/store_client/test:rocksdb_store_client_test` passes.
 2. `bazel test --config=asan-clang //src/ray/gcs/store_client/test:rocksdb_store_client_test` passes.
-3. The full GCS integration suite passes with `RAY_GCS_STORAGE=rocksdb`.
+3. The full GCS integration suite passes with `RAY_gcs_storage=rocksdb`.
 4. `rep-64-poc/harness/docker-compose/run.sh rocksdb` produces a JSON file with all three claim-relevant metrics (write p99, read p99, recovery time).
 5. `rep-64-poc/harness/kind/up.sh && rep-64-poc/harness/kind/bench.sh` produces the same JSON shape with comparable numbers.
 6. `EVIDENCE.md` contains a row per REP claim, each with status (verified / partial / contradicted) and a link to the supporting phase report.

@@ -17,7 +17,7 @@ Five changes turn the dep added in Phase 2 into a backend the GCS server can be 
    - Recovers the persisted job counter so a restart doesn't reissue old job IDs.
    - Lazily creates a column family on first `AsyncPut`/`AsyncGet` for an unseen table.
 
-2. **`src/ray/common/ray_config_def.h`** — adds `RAY_CONFIG(std::string, gcs_storage_path, "")`. `gcs_storage` already existed; the new field carries the `RAY_GCS_STORAGE_PATH` env var.
+2. **`src/ray/common/ray_config_def.h`** — adds `RAY_CONFIG(std::string, gcs_storage_path, "")`. `gcs_storage` already existed; the new field carries the `RAY_gcs_storage_path` env var.
 
 3. **`src/ray/gcs/gcs_server/gcs_server.{h,cc}`** — adds `StorageType::ROCKSDB_PERSIST` and the `kRocksDbStorage = "rocksdb"` constant, extends `GetStorageType()` with a third branch (with a `RAY_CHECK` that the storage path is non-empty), and adds a fourth case to `InitKVManager` that wraps `RocksDbStoreClient` in `ObservableStoreClient` exactly like the in-memory path. The cluster ID is plumbed in from `GetClusterId().Hex()` so the marker check is meaningful in production.
 
@@ -37,7 +37,7 @@ The REP draws this for the recovery flow:
 
 ```
 Head pod crashes → KubeRay restarts head pod → PVC re-mounted →
-GCS opens RocksDB at RAY_GCS_STORAGE_PATH → reads state → workers reconnect
+GCS opens RocksDB at RAY_gcs_storage_path → reads state → workers reconnect
 ```
 
 In the Phase 3 implementation, the C++ layer corresponds as follows:
@@ -182,7 +182,7 @@ const ClusterID &GetClusterId() const {
 }
 ```
 
-So the original `gcs_server.cc:593` `GetClusterId().Hex()` would `RAY_CHECK`-fail at every cold start with `RAY_GCS_STORAGE=rocksdb`. Unit tests didn't catch it because they construct `RocksDbStoreClient` directly, bypassing GcsServer.
+So the original `gcs_server.cc:593` `GetClusterId().Hex()` would `RAY_CHECK`-fail at every cold start with `RAY_gcs_storage=rocksdb`. Unit tests didn't catch it because they construct `RocksDbStoreClient` directly, bypassing GcsServer.
 
 A second, deeper finding: the cluster-ID marker mechanism as currently designed is partially redundant with Ray's existing `kv_manager.Put("cluster", "ClusterId", …)` (gcs_server.cc:167-170). With RocksDbStoreClient as the StoreClient, that persistence already provides cross-restart cluster-ID continuity. **For PVC-mismatch fail-fast (REP "Stale data protection") to work, GcsServer needs an *external* authoritative cluster_id source — K8s downward API or env var — to compare against the persisted one. There is no such source today.** The mismatch test path is not yet wired.
 

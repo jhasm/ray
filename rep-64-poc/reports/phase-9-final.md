@@ -37,7 +37,7 @@ These are explicitly deferred from the POC per the PLAN's "non-goals" section. T
 | KubeRay operator changes for PVC lifecycle | The POC ships a hand-written manifest; KubeRay operator integration is a separate, larger effort with its own design considerations. | Out of scope. |
 | HA / active-standby GCS | The REP itself does not propose HA for the embedded backend; out of scope. | Out of scope. |
 | State compaction / TTL / GCS OOM mitigation | Long-running clusters accumulate state. Compaction tuning (the REP's level-by-level table) is meaningful work; the POC uses RocksDB defaults. | Phase 7 follow-on. |
-| Migration tooling for existing Redis-backed Ray | No migration path is implemented. The POC's design is opt-in via `RAY_GCS_STORAGE=rocksdb`. | Out of scope. |
+| Migration tooling for existing Redis-backed Ray | No migration path is implemented. The POC's design is opt-in via `RAY_gcs_storage=rocksdb`. | Out of scope. |
 | `doc/source/` user docs | The POC's docs target maintainers (this dossier), not end users. | Out of scope. |
 | `chaos_rocksdb_store_client_test.cc` | Mirror of `chaos_redis_store_client_test.cc`. Mechanical work; moderate value because Phase 4 + 5 already exercise the most important chaos vectors. | Phase 6 follow-on. |
 

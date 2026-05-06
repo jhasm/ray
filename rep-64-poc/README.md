@@ -13,7 +13,7 @@ A proof-of-concept for replacing Ray's external-Redis fault-tolerance backend wi
   - `bazel/BUILD.rocksdb`, `bazel/ray_deps_setup.bzl` — RocksDB dep wiring
   - `src/ray/gcs/store_client/rocksdb_store_client.{h,cc}` — the new `StoreClient`
   - `src/ray/gcs/store_client/test/rocksdb_store_client_test.cc` — unit tests
-  - `src/ray/gcs/gcs_server/gcs_server.{h,cc}`, `src/ray/common/ray_config_def.h` — GCS wiring + `RAY_GCS_STORAGE=rocksdb` config
+  - `src/ray/gcs/gcs_server/gcs_server.{h,cc}`, `src/ray/common/ray_config_def.h` — GCS wiring + `RAY_gcs_storage=rocksdb` config
   - `BUILD.bazel` — three new build entries
 
   POC harness code lives entirely under `rep-64-poc/harness/` and is not on the production-bound path.
