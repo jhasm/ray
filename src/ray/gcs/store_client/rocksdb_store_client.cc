@@ -79,8 +79,9 @@ RocksDbStoreClient::RocksDbStoreClient(instrumented_io_context &io_service,
       strands_.emplace_back(std::make_unique<StrandT>(io_pool_->get_executor()));
     }
   }
-  RAY_CHECK(!db_path.empty()) << "RAY_GCS_STORAGE_PATH must be set when "
-                                 "RAY_GCS_STORAGE=rocksdb.";
+  RAY_CHECK(!db_path.empty()) << "RAY_gcs_storage_path must be set when "
+                                 "RAY_gcs_storage=rocksdb. (RAY_CONFIG env "
+                                 "var names are case-sensitive lowercase.)";
 
   // List existing CFs so we can open them all. On a fresh DB this
   // returns just `default`.

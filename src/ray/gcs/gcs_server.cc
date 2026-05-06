@@ -631,8 +631,10 @@ GcsServer::StorageType GcsServer::GetStorageType() const {
   }
   if (RayConfig::instance().gcs_storage() == kRocksDbStorage) {
     RAY_CHECK(!RayConfig::instance().gcs_storage_path().empty())
-        << "RAY_GCS_STORAGE=rocksdb requires RAY_GCS_STORAGE_PATH to be set "
-           "to a directory on a persistent volume.";
+        << "RAY_gcs_storage=rocksdb requires RAY_gcs_storage_path to be set "
+           "to a directory on a persistent volume. Note: RAY_CONFIG env var "
+           "names are case-sensitive and match the C++ field name verbatim "
+           "(lowercase), unlike Python-side flags such as RAY_REDIS_ADDRESS.";
     return StorageType::ROCKSDB_PERSIST;
   }
   RAY_LOG(FATAL) << "Unsupported GCS storage type: "

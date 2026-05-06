@@ -1,7 +1,7 @@
 """Phase 3 end-to-end recovery test (REP-64 POC).
 
 Walks through the user-visible recovery story the PLAN calls for:
-start a single-node Ray cluster with `RAY_GCS_STORAGE=rocksdb`, create
+start a single-node Ray cluster with `RAY_gcs_storage=rocksdb`, create
 a detached actor, kill the GCS process, restart, and verify the actor
 is recoverable.
 
@@ -63,8 +63,8 @@ def _ray_init_with_rocksdb(storage_dir: str):
     """Start a single-node Ray cluster configured for RocksDB FT."""
     import ray
 
-    os.environ["RAY_GCS_STORAGE"] = "rocksdb"
-    os.environ["RAY_GCS_STORAGE_PATH"] = storage_dir
+    os.environ["RAY_gcs_storage"] = "rocksdb"
+    os.environ["RAY_gcs_storage_path"] = storage_dir
     # Workers must wait for GCS to come back, not crash on first
     # disconnect — same knob as Redis-based FT.
     os.environ.setdefault("RAY_gcs_rpc_server_reconnect_timeout_s", "60")
@@ -102,7 +102,7 @@ def _kill_gcs_process():
 def test_detached_actor_survives_gcs_kill(gcs_storage_dir):
     """The headline Phase 3 scenario.
 
-    1. Start Ray with RAY_GCS_STORAGE=rocksdb.
+    1. Start Ray with RAY_gcs_storage=rocksdb.
     2. Create a detached actor and put a value into it.
     3. Hard-kill the GCS process.
     4. Wait for GCS supervisor to restart it (Ray's existing FT

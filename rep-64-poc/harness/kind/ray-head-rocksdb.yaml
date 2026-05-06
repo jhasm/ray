@@ -5,7 +5,12 @@
 #   - Single Ray head pod (`ray-head-0`) managed by a StatefulSet so
 #     the pod identity is stable across restarts.
 #   - PersistentVolumeClaim mounted at /data/gcs-state — same path the
-#     RAY_GCS_STORAGE_PATH env var points at.
+#     RAY_gcs_storage_path env var points at. Note the lowercase: RAY_CONFIG
+#     auto-mapped flags (gcs_storage, gcs_storage_path,
+#     gcs_rpc_server_reconnect_timeout_s, ...) match the C++ field name
+#     verbatim and are looked up via case-sensitive getenv. RAY_REDIS_ADDRESS
+#     happens to be uppercase only because it's read in Python (node.py),
+#     not via the auto-mapped path.
 #   - Headless Service so workers can reach the head pod by stable name.
 #   - No Redis. No external KV store. State lives on the PVC.
 #
@@ -82,9 +87,9 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["ray", "start", "--head", "--block"]
           env:
-            - name: RAY_GCS_STORAGE
+            - name: RAY_gcs_storage
               value: "rocksdb"
-            - name: RAY_GCS_STORAGE_PATH
+            - name: RAY_gcs_storage_path
               value: "/data/gcs-state"
             # Workers wait for GCS to come back rather than failing on
             # first disconnect — same knob as Redis-based FT.
