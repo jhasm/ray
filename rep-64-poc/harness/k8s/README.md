@@ -6,10 +6,6 @@ Covers the K8s-shaped items from `rep-64-poc/COLLABORATORS.md`: pod-delete
 recovery (#5), actor-survival E2E (#6), substrate sweep (#4 partial), and
 fast-NVMe throughput (#8, stubbed).
 
-For background on *why* and *what's tested*, see
-[`DESIGN.md`](./DESIGN.md). For the original task breakdown, see
-[`IMPLEMENTATION.md`](./IMPLEMENTATION.md).
-
 ## Quickstart (local k3d)
 
 ```bash
@@ -49,9 +45,9 @@ The local tier was originally kind, but kind v0.25 fails on Mariner
 cgroup-v1 hosts: kubelet can't create the nested systemd slices it
 expects (`cgroup [kubelet kubepods] has some missing paths`).  k3d
 (k3s in Docker) has a much smaller cgroup footprint and works on the
-same hosts.  See `DESIGN.md` for the diagnostic trail.  All scripts
-were written tier-agnostic — switching to remote (EKS, GKE, or any
-managed K8s) is a one-line edit to `env/remote.env`.
+same hosts.  All scripts were written tier-agnostic — switching to
+remote (EKS, GKE, or any managed K8s) is a one-line edit to
+`env/remote.env`.
 
 ## Scripts catalog
 
