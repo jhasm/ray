@@ -92,7 +92,7 @@ write_result() {
   local k8s_version
   k8s_version="$(kubectl version -o json 2>/dev/null | jq -r '.serverVersion.gitVersion // "unknown"')"
   local kuberay_version
-  kuberay_version="$(kubectl get deploy -A -l app.kubernetes.io/component=kuberay-operator \
+  kuberay_version="$(kubectl get deploy -A -l app.kubernetes.io/name=kuberay-operator \
     -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null \
     | sed -E 's/^.*://' || echo unknown)"
   local node_count

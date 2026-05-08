@@ -84,7 +84,7 @@ done
 # lack; on RBAC-restricted clusters the CRDs check above is the meaningful
 # signal that the operator was deployed.
 if op_out=$(kubectl --context="$KUBE_CONTEXT" get deploy -A \
-    -l app.kubernetes.io/component=kuberay-operator -o name 2>&1); then
+    -l app.kubernetes.io/name=kuberay-operator -o name 2>&1); then
   operator_count=$(printf '%s\n' "$op_out" | grep -c . || true)
   if (( operator_count >= 1 )); then
     log "  ✓ KubeRay operator deployment found (${operator_count} instance(s))"
