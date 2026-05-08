@@ -26,6 +26,35 @@ That's it. Individual scripts (`scripts/00-setup-k3d.sh`,
 `scripts/30-pod-delete.sh`, etc.) can be run directly for iterative
 debugging.
 
+## Cleaning up
+
+Three levels of cleanup, pick whichever matches what you want to
+preserve:
+
+```bash
+# 1. Soft reset — keep the cluster + KubeRay operator, drop test state.
+#    Useful between iterations when you're debugging a single test.
+kubectl delete raycluster --all -n rep64-poc
+kubectl delete pvc        --all -n rep64-poc
+
+# 2. Full teardown — delete the whole k3d cluster (containers, networks,
+#    images imported via `k3d image import`, kubeconfig context).
+scripts/99-teardown.sh
+# or, equivalently, run a sweep then nuke:
+scripts/run-all.sh --teardown
+
+# 3. Manual fallback if the script can't reach the cluster (e.g. docker
+#    restart left k3d in a half state).
+k3d cluster delete rep64
+kubectl config delete-context k3d-rep64 || true
+```
+
+`99-teardown.sh` reads `KUBE_CONTEXT` from the env file and behaves
+differently per tier: for k3d contexts it `k3d cluster delete`s; for
+remote contexts it deletes only the RayCluster + PVCs in `$NAMESPACE`
+(prompts for confirmation; bypass with `ASSUME_YES=1`) and never
+touches the namespace itself.
+
 ## Tier model
 
 The harness is designed to run identical scripts against two tiers:
@@ -38,6 +67,40 @@ The harness is designed to run identical scripts against two tiers:
 `KUBE_CONTEXT` in the env file selects which kubectl context the run
 attaches to.  Remote tier (when added) will never create or destroy
 clusters — bring-up and tear-down stay the operator's responsibility.
+
+### Switching between tiers
+
+The harness picks a tier purely from `HARNESS_ENV_FILE`; there is no
+global "current tier" state.  Switch by exporting a different env file
+before running any script:
+
+```bash
+# Local k3d (default)
+export HARNESS_ENV_FILE=rep-64-poc/harness/k8s/env/k3d.env
+
+# Remote (e.g. prod-ltx1-k8s-1, EKS, GKE) — author env/remote.env first
+export HARNESS_ENV_FILE=rep-64-poc/harness/k8s/env/remote.env
+```
+
+Every script sources `lib.sh::load_env`, which calls
+`kubectl config use-context "$KUBE_CONTEXT"` as a side effect.  That
+means running any harness script silently flips your shell's kubectl
+context to whatever the env file specifies — convenient for the
+harness, surprising if you have other kubectl work in flight.  Switch
+back explicitly when done:
+
+```bash
+kubectl config use-context prod-ltx1-k8s-1   # or whatever you were on
+kubectl config current-context               # confirm
+```
+
+Until the remote tier scripts (Phase E — `00-check-remote.sh`,
+`run-all.sh --tier=remote`) land, the workable path against an
+existing cluster is: hand-author `env/remote.env` off `env/k3d.env`
+(set `KUBE_CONTEXT`, `NAMESPACE`, `IMAGE` to a registry the cluster
+can pull from, `STORAGE_CLASS`), then run individual scripts
+directly — `10-deploy-cluster.sh`, `20-actor-survival.sh`,
+`30-pod-delete.sh`.  Skip `00-setup-k3d.sh`; it's k3d-only.
 
 ### Why k3d, not kind
 
