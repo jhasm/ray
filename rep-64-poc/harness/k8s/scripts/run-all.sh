@@ -38,6 +38,10 @@ export HARNESS_ENV_FILE="$ENV_FILE"
 
 # shellcheck disable=SC1091
 source "$HERE/../lib.sh"
+# Pull RESULTS_DIR (and the rest of the env) into this shell so the aggregate
+# call below can resolve it.  Individual test scripts call load_env themselves;
+# the orchestrator needs it too because we reference $RESULTS_DIR directly.
+load_env
 
 log "=== run-all: tier=$TIER env=$ENV_FILE ==="
 
