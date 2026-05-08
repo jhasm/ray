@@ -20,11 +20,15 @@ require_env() {
 }
 
 # load_env: sources $HARNESS_ENV_FILE and switches kubectl context. Idempotent.
+# set -a / set +a causes all assignments in the env file to be exported so that
+# render_manifest's envsubst call can see them (envsubst only substitutes exported vars).
 load_env() {
   : "${HARNESS_ENV_FILE:?set HARNESS_ENV_FILE=rep-64-poc/harness/k8s/env/k3d.env}"
   [[ -f "$HARNESS_ENV_FILE" ]] || abort "env file not found: $HARNESS_ENV_FILE"
+  set -a
   # shellcheck disable=SC1090
   source "$HARNESS_ENV_FILE"
+  set +a
   require_env KUBE_CONTEXT NAMESPACE IMAGE STORAGE_CLASS RESULTS_DIR
   kubectl config use-context "$KUBE_CONTEXT" >/dev/null 2>&1 \
     || log "kubectl context '$KUBE_CONTEXT' not yet available (will be created by the setup script)"

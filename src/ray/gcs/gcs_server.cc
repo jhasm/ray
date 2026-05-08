@@ -182,10 +182,13 @@ GcsServer::GcsServer(const ray::gcs::GcsServerConfig &config,
     // (e.g. K8s downward API) and is deferred to a follow-on PR; see
     // rep-64-poc/reports/phase-3-skeleton.md for the full deferral
     // writeup.
+    // Use a "tables" subdirectory so the KV client (InitKVManager) can open
+    // its own separate RocksDB instance at "kv/" without triggering RocksDB's
+    // in-process double-open guard (locked_files static map → ENOLCK).
     store_client = std::make_shared<ObservableStoreClient>(
         std::make_unique<RocksDbStoreClient>(
             io_context,
-            RayConfig::instance().gcs_storage_path(),
+            RayConfig::instance().gcs_storage_path() + "/tables",
             /*expected_cluster_id=*/"",
             RayConfig::instance().gcs_rocksdb_async_offload(),
             RayConfig::instance().gcs_rocksdb_io_pool_size(),
@@ -702,11 +705,13 @@ void GcsServer::InitKVManager() {
     break;
   case (StorageType::ROCKSDB_PERSIST):
     // See ROCKSDB_PERSIST case above (in the gcs_table_storage path) for
-    // the cluster_id deferral rationale.
+    // the cluster_id deferral rationale.  Use a "kv" subdirectory so that
+    // this client and the tables client do not share a RocksDB directory,
+    // avoiding the in-process double-open ENOLCK failure.
     store_client = std::make_unique<ObservableStoreClient>(
         std::make_unique<RocksDbStoreClient>(
             io_context,
-            RayConfig::instance().gcs_storage_path(),
+            RayConfig::instance().gcs_storage_path() + "/kv",
             /*expected_cluster_id=*/"",
             RayConfig::instance().gcs_rocksdb_async_offload(),
             RayConfig::instance().gcs_rocksdb_io_pool_size(),
