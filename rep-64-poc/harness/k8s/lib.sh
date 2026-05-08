@@ -26,8 +26,8 @@ load_env() {
   # shellcheck disable=SC1090
   source "$HARNESS_ENV_FILE"
   require_env KUBE_CONTEXT NAMESPACE IMAGE STORAGE_CLASS RESULTS_DIR
-  kubectl config use-context "$KUBE_CONTEXT" >/dev/null \
-    || abort "kubectl context not found: $KUBE_CONTEXT"
+  kubectl config use-context "$KUBE_CONTEXT" >/dev/null 2>&1 \
+    || log "kubectl context '$KUBE_CONTEXT' not yet available (will be created by 00-setup-kind.sh)"
 }
 
 # render_manifest <template-file>: prints the rendered YAML to stdout.
