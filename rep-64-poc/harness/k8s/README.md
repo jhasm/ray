@@ -119,16 +119,33 @@ Run scripts from the repo root, not from `rep-64-poc/harness/k8s/`.
 `RESULTS_DIR` in `env/k3d.env` is a relative path; running from inside
 the harness directory nests the output one level too deep.
 
-### Open finding (rocksdb 0–50 % recovery)
+### Open finding 1: rocksdb 0–50 % recovery (non-deterministic)
 
-The headline 30-pod-delete test currently records 0 % to 50 % actor
-state preservation across runs.  The non-determinism suggests an
-async-write race: actor manager writes to GCS aren't durably committed
-to RocksDB before the head pod is killed.  The 2-second flush sleep at
-`python/pod_delete_workload.py:65-66` is insufficient.  Confirmed POC
-bug; investigation deferred per the harness-build phase mandate.  The
-inmem baseline records 0 % (expected — memory-only GCS doesn't survive
-pod kill).
+The headline 30-pod-delete test currently records 0 %–50 % actor state
+preservation across runs (observed: 0 %, 40 %, 50 % in successive runs).
+The non-determinism suggests an async-write race: actor manager writes
+to GCS aren't durably committed to RocksDB before the head pod is
+killed.  The 2-second flush sleep at `python/pod_delete_workload.py:65-66`
+is insufficient.  Confirmed POC bug; investigation deferred per the
+harness-build phase mandate.  The inmem baseline records 0 % (expected —
+memory-only GCS doesn't survive pod kill).
+
+### Open finding 2: rocksdb head-pod cold-start exceeds liveness window
+
+On a cold cluster (fresh PVC, first head-pod restart), rocksdb GCS
+startup takes ~138 s — far longer than the kubelet liveness probe
+allows.  The container is killed mid-startup, triggering a CrashLoop;
+recovery eventually happens via repeated container restarts within the
+300 s harness timeout.  On a warm cluster the same path takes ~10 s, so
+this only manifests on the first restart of a freshly deployed cluster
+— which is exactly the production-relevant scenario.  Liveness probe
+config likely needs `initialDelaySeconds` raised, or KubeRay's default
+probe schedule needs override at the RayCluster level.
+
+## Canonical baseline
+
+`results/canonical/` contains the committed reference baseline (`*.committed.json` per test, plus a `summary.md`).  This is the snapshot the project considers "current known state" — both findings above are visible
+in it.  Re-run `run-all.sh` and copy the latest `results/k3d/*.json` over the canonical files to refresh the baseline once a fix lands.
 
 ### Substrate sweep
 
