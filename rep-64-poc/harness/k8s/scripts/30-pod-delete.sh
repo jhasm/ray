@@ -128,11 +128,16 @@ run_backend() {
   local REMOTE_VERIFY="/tmp/pod_delete_workload_${RUN_ID}_v.py"
   kubectl cp "$WORKLOAD_SRC" "$NAMESPACE/$NEW_HEAD:$REMOTE_VERIFY"
   log "running PHASE=verify on $NEW_HEAD..."
-  local VERIFY_LOGS
-  # inmem is expected to fail state preservation; don't let a non-zero exit abort.
+  local VERIFY_LOGS VERIFY_RC
+  # Capture verify-phase exit code so pass/fail logic below reflects whether
+  # the workload met its spec (pod_delete_workload.py exits 1 when
+  # state_preserved_pct < 95 or new_tasks_ok is false).
+  set +e
   VERIFY_LOGS="$(kubectl exec -n "$NAMESPACE" "$NEW_HEAD" -- \
     env PHASE=verify ACTOR_COUNT="$ACTOR_COUNT" SNAPSHOT="$SNAPSHOT_JSON" \
-    python "$REMOTE_VERIFY" 2>&1)" || true
+    python "$REMOTE_VERIFY" 2>&1)"
+  VERIFY_RC=$?
+  set -e
   echo "$VERIFY_LOGS" | tail -20 >&2
 
   local METRICS_LINE METRICS_JSON
@@ -141,14 +146,17 @@ run_backend() {
   METRICS_JSON="${METRICS_LINE#METRICS_JSON }"
   log "raw metrics: $METRICS_JSON"
 
-  # 9. Augment metrics with pod_restart_s and backend.
+  # 9. Augment metrics with pod_restart_s, backend, and verify_rc.
   METRICS_JSON="$(echo "$METRICS_JSON" | jq \
     --arg b "$backend" \
     --argjson prs "$POD_RESTART_S" \
-    '. + {backend: $b, pod_restart_s: $prs}')"
+    --argjson rc "$VERIFY_RC" \
+    '. + {backend: $b, pod_restart_s: $prs, verify_rc: $rc}')"
   log "augmented metrics: $METRICS_JSON"
 
-  # 10. Determine pass/fail.
+  # 10. Determine pass/fail.  Same threshold for every backend so the inmem
+  # baseline correctly reports status=fail when it loses state — which is the
+  # whole point of running the baseline.  Aggregate.py highlights the gap.
   local PCT NEW_OK STATUS
   PCT="$(echo "$METRICS_JSON" | jq -r '.state_preserved_pct')"
   NEW_OK="$(echo "$METRICS_JSON" | jq -r '.new_tasks_ok')"
@@ -156,21 +164,14 @@ run_backend() {
   START_S="$(echo "scale=0; $T1 / 1000000000" | bc)"
   DURATION=$(( $(date +%s) - START_S ))
 
-  if [[ "$backend" == "rocksdb" ]]; then
-    # rocksdb: expect full preservation (>=95%).
-    if awk "BEGIN{exit ($PCT >= 95) ? 0 : 1}"; then
-      STATUS=pass
-    else
-      STATUS=fail
-    fi
-  else
-    # memory (inmem): state preservation is expected to be ~0% — record result but never abort.
-    # The test "passes" as a baseline measurement regardless of pct.
+  if (( VERIFY_RC == 0 )) && awk "BEGIN{exit ($PCT >= 95) ? 0 : 1}" && [[ "$NEW_OK" == "true" ]]; then
     STATUS=pass
+  else
+    STATUS=fail
   fi
 
   write_result "$test_name" "$STATUS" "$DURATION" "$METRICS_JSON"
-  log "backend=$backend status=$STATUS state_preserved_pct=$PCT pod_restart_s=$POD_RESTART_S"
+  log "backend=$backend status=$STATUS state_preserved_pct=$PCT pod_restart_s=$POD_RESTART_S verify_rc=$VERIFY_RC"
 
   # 11. Cleanup verify script on new pod (best-effort).
   kubectl exec -n "$NAMESPACE" "$NEW_HEAD" -- rm -f "$REMOTE_VERIFY" 2>/dev/null || true
