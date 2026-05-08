@@ -10,9 +10,28 @@
 
 **Reference:** [`DESIGN.md`](./DESIGN.md) (committed as `72326ce7b2`) is the authoritative design.
 
-**Scope of this plan:** Phases A–D, all of which run end-to-end on the developer's local machine using a kind cluster. Phases E (remote tier verification) and F (real-storage substrate sweep) are outlined at the end and become a follow-on plan when Phases A–D are green.
+**Scope of this plan:** Phases A–D, all of which run end-to-end on the developer's local machine using a k3d cluster. Phases E (remote tier verification) and F (real-storage substrate sweep) are outlined at the end and become a follow-on plan when Phases A–D are green.
 
 **Out of scope:** Item #8 (fast-NVMe pipelined throughput) requires the `storage_microbench` Bazel binary to be bundled in the Ray image. Phase D includes a stub that always skips with a clear message; bundling work is a separate plan.
+
+---
+
+## Amendment: kind → k3d (2026-05-08)
+
+The plan originally targeted **kind** for the local cluster runtime. During Task A5 execution, kind worker nodes failed to start kubelet on the Mariner cgroup-v1 host with: `cgroup ["kubelet" "kubepods"] has some missing paths: /sys/fs/cgroup/systemd/kubelet.slice/kubelet-kubepods.slice` — restricted systemd cgroup delegation prevents kind from creating its expected nested slices.
+
+**k3d** (k3s in Docker) has a smaller cgroup footprint and runs cleanly on the same host (verified with a stock nginx pod plus a 2.17 GB Ray image import). The pivot was committed in `dfa2025cc2`. Plan-level deltas the executor should apply when reading the task bodies below:
+
+- `env/kind.env` → `env/k3d.env` (file renamed; `KIND_CLUSTER_NAME` → `K3D_CLUSTER_NAME`; `KUBE_CONTEXT` `kind-rep64` → `k3d-rep64`; `STORAGE_CLASS` `standard` → `local-path` because k3s ships local-path-provisioner as the default SC).
+- `scripts/00-setup-kind.sh` → `scripts/00-setup-k3d.sh` (same structure; replaces `kind create cluster` + `kind load docker-image` + `kind delete cluster` with the k3d equivalents).
+- `scripts/99-teardown.sh`: change the `kind delete cluster` branch to `k3d cluster delete`.
+- `scripts/run-all.sh` (`--tier=kind` arg): rename to `--tier=k3d` (or accept `local` as an alias).
+- `results/kind/` directory references: `results/k3d/`.
+- `RESULTS_DIR` in env file: `…/results/kind` → `…/results/k3d`.
+- `D5` canonical: `kind-baseline.committed.json` → `k3d-baseline.committed.json`.
+- Tasks A6, A8, B-D bodies: replace any literal `kind` in commands/paths with `k3d`. The body text and verify steps are otherwise unchanged.
+
+Tasks already completed before the pivot (A1–A4) used the original `env/kind.env` filename, but the file was renamed in `dfa2025cc2`, so subsequent tasks correctly reference `env/k3d.env`. Task A5's first commit (`8c3692c6cd`) is now a kind-flavored historical artifact superseded by the k3d setup script in `dfa2025cc2`.
 
 ---
 
