@@ -85,8 +85,12 @@ Spec thresholds (from `python/aggregate.py:THRESHOLDS`):
 A finding looks like:
 
 ```
-| 30-pod-delete | rocksdb | state_preserved_pct | >= 95 (actor state ≥95% preserved) | 0 | 30-pod-delete-20260508T042023Z.json |
+| 30-pod-delete.inmem | memory | state_preserved_pct | >= 95 (actor state ≥95% preserved) | 0 | 30-pod-delete.inmem.committed.json |
 ```
+
+(That row is the expected baseline finding: the in-memory GCS backend
+loses all actor state on pod kill — that's the contrast against
+rocksdb's 100 %, exactly the point of running both.)
 
 The `source` column always points back to the raw JSON for full context.
 
@@ -115,16 +119,31 @@ Run scripts from the repo root, not from `rep-64-poc/harness/k8s/`.
 `RESULTS_DIR` in `env/k3d.env` is a relative path; running from inside
 the harness directory nests the output one level too deep.
 
-### Open finding 1: rocksdb 0–50 % recovery (non-deterministic)
+### Resolved: rocksdb 0–50 % recovery was test-methodology, not a durability bug
 
-The headline 30-pod-delete test currently records 0 %–50 % actor state
-preservation across runs (observed: 0 %, 40 %, 50 % in successive runs).
-The non-determinism suggests an async-write race: actor manager writes
-to GCS aren't durably committed to RocksDB before the head pod is
-killed.  The 2-second flush sleep at `python/pod_delete_workload.py:65-66`
-is insufficient.  Confirmed POC bug; investigation deferred per the
-harness-build phase mandate.  The inmem baseline records 0 % (expected —
-memory-only GCS doesn't survive pod kill).
+An earlier baseline showed non-deterministic 0–50 % recovery on the
+30-pod-delete test and attributed it to async-write durability gaps.
+That attribution was wrong.  Investigation in May 2026 traced the full
+write path (`AsyncPut` → `wo.sync = true` fsync → callback → publish
+→ driver `ConnectActor` → method dispatch) and ran the substrate-fsync
+probe against `/data/gcs` (`verdict=honest`, fsync p50 = 4015 µs).
+Both confirmed the GCS state IS durably persisted before `ray.get()`
+returns from an actor method.
+
+The actual cause was K8s scheduler placement: Ray's head pod runs a
+worker process by default with `num-cpus = HEAD_CPU`, so a fraction of
+user actors landed on the head pod's worker.  When the test fired
+`kubectl delete --grace-period=0 --force` on the head pod, those
+co-located actor processes died with the pod — the variance in
+recovery rate was just "what fraction of the 10 happened to be
+co-located with the GCS this time".
+
+**Fix**: `headGroupSpec.rayStartParams.num-cpus = 0` (knob `HEAD_RAY_CPU`
+in env files).  The K8s container request/limit stays at `HEAD_CPU` so
+gcs_server + raylet still get real CPU, but the head's raylet
+advertises 0 CPUs to the scheduler, so user actors only land on
+worker pods.  Post-fix the test reports a clean 100 % recovery on
+rocksdb across runs; inmem baseline still correctly reports 0 %.
 
 ### Open finding 2: rocksdb head-pod cold-start exceeds liveness window
 

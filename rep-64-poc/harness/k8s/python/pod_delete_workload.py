@@ -57,13 +57,12 @@ def setup() -> int:
     ray.get([a.incr.remote(k) for a, k in zip(actors, increments)])
     snapshot = {f"rep64-pd-actor-{i}": k for i, k in enumerate(increments)}
 
-    # Brief pause to allow GCS actor manager to flush all actor writes to storage.
-    # Actor registrations are written to RocksDB via async callbacks; by the time
-    # ray.get() returns the increments have completed (proving all actors are
-    # scheduled), but the storage write callbacks may still be in-flight for some
-    # actors. A short sleep closes this window.
-    import time as _time
-    _time.sleep(2)
+    # No flush sleep needed: GcsActorManager fsyncs the ALIVE write before
+    # publishing actor state, the driver's ConnectActor is gated on that
+    # publish, and method-call dispatch is gated on ConnectActor — so by the
+    # time ray.get(incr) returns, the ALIVE row IS durable in the WAL. See
+    # rocksdb_store_client.cc::SyncWriteOptions (wo.sync=true) and
+    # gcs_actor_manager.cc::OnActorCreationSuccess.
 
     print("SNAPSHOT_JSON " + json.dumps(snapshot), flush=True)
     print("METRICS_JSON " + json.dumps({"actors_created": n}), flush=True)

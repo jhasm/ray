@@ -8,7 +8,13 @@ spec:
   headGroupSpec:
     rayStartParams:
       dashboard-host: "0.0.0.0"
-      num-cpus: "${HEAD_CPU}"
+      # Ray-scheduler-visible CPU on the head node. Default 0 in env files
+      # so user actors land only on worker pods — actors co-located with
+      # the GCS die with the pod when the pod-delete recovery test fires
+      # SIGKILL, masking GCS state durability behind worker-process loss.
+      # K8s container request/limit below stays at HEAD_CPU; the head still
+      # needs real CPU to run gcs_server + raylet.
+      num-cpus: "${HEAD_RAY_CPU}"
     template:
       spec:
         containers:

@@ -69,9 +69,13 @@ run_backend() {
   # Cleanup setup script on old pod (best-effort, pod is about to die anyway).
   kubectl exec -n "$NAMESPACE" "$OLD_HEAD" -- rm -f "$REMOTE_SETUP" 2>/dev/null || true
 
-  # Brief pause to allow GCS to flush actor state to RocksDB storage. RocksDB writes are
-  # synchronous at the WAL level, but GCS actor manager may batch writes internally.
-  sleep 3
+  # No flush sleep needed: AsyncPut uses wo.sync=true so each write
+  # fsyncs the WAL before its callback fires; the GCS actor manager's
+  # RegisterActor/OnActorCreationSuccess chains are gated on those
+  # callbacks, and the driver's method-call dispatch is gated on the
+  # post-fsync ALIVE pubsub. By the time PHASE=setup's `ray.get` returns,
+  # every actor's ALIVE row IS durable. See PR-64-poc analysis for the
+  # full trace.
 
   # 4. Record T1 and force-delete the head pod.
   local T1

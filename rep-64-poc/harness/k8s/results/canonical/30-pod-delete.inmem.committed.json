@@ -2,8 +2,8 @@
   "schema_version": 1,
   "test_name": "30-pod-delete.inmem",
   "tier": "k3d",
-  "started_at": "2026-05-08T05:43:32Z",
-  "duration_s": 12,
+  "started_at": "2026-05-08T20:44:06Z",
+  "duration_s": 50,
   "status": "fail",
   "skip_reason": null,
   "cluster": {
@@ -14,7 +14,7 @@
     "k8s_server_version": "v1.30.4+k3s1"
   },
   "image": "cr.ray.io/rayproject/ray:nightly-rep64-fix",
-  "git_commit": "cbea070f2f27035110c7d338c4b7e582d9467377",
+  "git_commit": "a221f6f7f316c35caa30fbe3ac9349e0a60db7e9",
   "metrics": {
     "actors_created": 10,
     "actors_recovered": 0,
@@ -22,7 +22,7 @@
     "new_tasks_executed": 1,
     "new_tasks_ok": true,
     "backend": "memory",
-    "pod_restart_s": 10.44,
+    "pod_restart_s": 10.43,
     "verify_rc": 1
   },
   "errors": []
