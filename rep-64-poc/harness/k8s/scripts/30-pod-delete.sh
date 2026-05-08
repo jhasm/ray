@@ -202,7 +202,12 @@ if [[ "${BASELINE_INMEM:-0}" == "1" ]]; then
   run_backend memory 30-pod-delete.inmem
 
   # Restore rocksdb cluster so subsequent tasks (D1+) have a working cluster.
+  # KubeRay does NOT recreate head pods on PodTemplate changes alone — it only
+  # reconciles the spec.  Apply-only would leave the running pod on the memory
+  # backend, so we teardown_cluster first to force KubeRay to recreate pods
+  # against the new (rocksdb) spec.
   log "restoring rocksdb cluster after inmem baseline..."
+  teardown_cluster
   export GCS_STORAGE=rocksdb
   render_manifest "$HERE/../manifests/raycluster.yaml.tmpl" | kubectl apply -f -
   wait_ray_ready "$NAMESPACE" "$CLUSTER_NAME" "$DEPLOY_TIMEOUT_S" \

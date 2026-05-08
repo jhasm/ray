@@ -50,11 +50,15 @@ run_step() {
   shift 2
   log "--- step: $name ---"
   STEP_NAMES+=("$name")
-  if "$@"; then
+  # Capture the exit code directly — `$?` after `fi` is the if-statement's
+  # status, which is 0 when the test fell through, not the failed command's
+  # actual return code.
+  local rc=0
+  "$@" || rc=$?
+  if (( rc == 0 )); then
     STEP_STATUS+=("ok")
     return 0
   fi
-  local rc=$?
   STEP_STATUS+=("fail")
   log "--- step $name FAILED (rc=$rc) ---"
   if [[ "$required" == "required" ]]; then
