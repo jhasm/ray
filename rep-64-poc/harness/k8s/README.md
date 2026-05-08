@@ -59,14 +59,14 @@ touches the namespace itself.
 
 The harness is designed to run identical scripts against two tiers:
 
-| Tier   | Env file       | Cluster bring-up   | Status                                   |
-|--------|----------------|--------------------|------------------------------------------|
-| k3d    | `env/k3d.env`  | `00-setup-k3d.sh`  | implemented; runs end-to-end             |
-| remote | `env/remote.env` (planned) | external | remote bring-up + perms-check are Phase E follow-on (not yet implemented) |
+| Tier   | Env file                                                          | Cluster bring-up                                                                | Status                       |
+|--------|-------------------------------------------------------------------|---------------------------------------------------------------------------------|------------------------------|
+| k3d    | `env/k3d.env`                                                     | `00-setup-k3d.sh`                                                               | implemented; runs end-to-end |
+| remote | `env/remote.env` (gitignored; copy from `env/remote.env.example`) | external (operator-managed); `00-check-remote.sh` verifies preflight            | implemented; runs end-to-end |
 
 `KUBE_CONTEXT` in the env file selects which kubectl context the run
-attaches to.  Remote tier (when added) will never create or destroy
-clusters — bring-up and tear-down stay the operator's responsibility.
+attaches to.  Remote-tier operations never create or destroy clusters
+— bring-up and tear-down stay the operator's responsibility.
 
 ### Switching between tiers
 
@@ -94,13 +94,8 @@ kubectl config use-context prod-ltx1-k8s-1   # or whatever you were on
 kubectl config current-context               # confirm
 ```
 
-Until the remote tier scripts (Phase E — `00-check-remote.sh`,
-`run-all.sh --tier=remote`) land, the workable path against an
-existing cluster is: hand-author `env/remote.env` off `env/k3d.env`
-(set `KUBE_CONTEXT`, `NAMESPACE`, `IMAGE` to a registry the cluster
-can pull from, `STORAGE_CLASS`), then run individual scripts
-directly — `10-deploy-cluster.sh`, `20-actor-survival.sh`,
-`30-pod-delete.sh`.  Skip `00-setup-k3d.sh`; it's k3d-only.
+For full remote-tier workflow (preflight + deploy + tests +
+aggregate), see "Reproducing on a different cluster" below.
 
 ### Why k3d, not kind
 
@@ -173,6 +168,26 @@ warm cache, ~50 min cold).  k3d picks it up via `k3d image import`;
 remote tiers need it pushed to a registry the cluster can reach.  For
 external collaborators, the image is also published at
 `ghcr.io/jhasm/ray-rocksdb-poc:rep-64-poc` (public).
+
+### Image registry & pull secrets
+
+For public registries (the default `ghcr.io/jhasm/ray-rocksdb-poc:rep-64-poc`
+is public), no extra setup is needed.  For private registries, attach the
+pull secret to the namespace's default ServiceAccount so KubeRay-generated
+pods inherit it automatically:
+
+```bash
+kubectl -n "$NAMESPACE" create secret docker-registry rep64-pull \
+  --docker-server=<registry> --docker-username=<user> --docker-password=<token>
+
+kubectl -n "$NAMESPACE" patch sa default \
+  -p '{"imagePullSecrets":[{"name":"rep64-pull"}]}'
+```
+
+The harness manifest doesn't reference `imagePullSecrets` directly to
+keep the template stable across tiers; the ServiceAccount workaround
+covers all KubeRay-generated pods (head, workers, and Job pods) in one
+patch.
 
 ## Known issues
 
@@ -252,24 +267,34 @@ Every cluster-specific value lives in the env file.  Common knobs:
 `HARNESS_ENV_FILE` can be set explicitly to override the default lookup;
 otherwise scripts expect `env/k3d.env`.
 
-## Reproducing on a different cluster (planned)
-
-The remote tier is designed but not yet implemented.  Sketch of how it
-will work once the Phase E scripts land:
+## Reproducing on a different cluster
 
 ```bash
-# Will need: env/remote.env (templated from a future remote.env.example),
-# scripts/00-check-remote.sh (read-only perms + CRDs check), and run-all
-# with --tier=remote.
-
+cd rep-64-poc/harness/k8s
 cp env/remote.env.example env/remote.env
-# Edit env/remote.env: KUBE_CONTEXT, NAMESPACE, IMAGE (registry the
-# cluster can pull from), STORAGE_CLASS, SUBSTRATE_SWEEP_CLASSES.
 
-scripts/00-check-remote.sh                 # (planned) read-only verify
-scripts/run-all.sh --tier=remote --skip-setup
+# Edit env/remote.env — required knobs:
+#   KUBE_CONTEXT     your kubectl context name
+#   NAMESPACE        a namespace where you have RayCluster/PVC/Job rights
+#   IMAGE            registry path your cluster can pull from
+#                    (default: ghcr.io/jhasm/ray-rocksdb-poc:rep-64-poc)
+#   STORAGE_CLASS    pick one from `kubectl get sc`
+
+export HARNESS_ENV_FILE=env/remote.env
+scripts/run-all.sh --tier=remote          # preflight + deploy + tests + aggregate
+cat results/remote/summary.md             # findings
 ```
 
-Until then, contributors who want to validate against an external
-cluster can hand-author an env file off `env/k3d.env`, set
-`HARNESS_ENV_FILE=env/your.env`, and run individual scripts directly.
+`run-all.sh --tier=remote` first runs `scripts/00-check-remote.sh`,
+which verifies kubectl reach, namespace existence, RBAC for the
+resources the harness creates, KubeRay CRDs + operator presence, and
+the configured StorageClass(es).  It is read-only — it never mutates
+the cluster.  A failed preflight aborts the run before
+`10-deploy-cluster.sh`.
+
+`scripts/run-all.sh --tier=remote --skip-setup` skips the preflight
+when you already know your cluster is properly configured.
+`scripts/99-teardown.sh` against a remote context only deletes the
+RayCluster + PVCs in `$NAMESPACE` (with a `y/N` prompt unless
+`ASSUME_YES=1`); it never removes the namespace itself or touches
+unrelated workloads.
