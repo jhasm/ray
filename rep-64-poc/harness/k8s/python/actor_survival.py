@@ -28,12 +28,17 @@ def _build_state(actors):
     return {f"rep64-actor-{i}": n for i, n in enumerate(increments)}
 
 
+NAMESPACE = "rep64-test"
+
+
 def main() -> int:
     n = int(os.environ.get("ACTOR_COUNT", "10"))
     print(f"[actor_survival] creating {n} named detached actors", flush=True)
 
-    # Inside a RayJob, ray.init() with no args attaches to the cluster.
-    ray.init()
+    # Inside a RayJob, ray.init() attaches to the cluster. We use an explicit
+    # namespace so that detached actors survive the disconnect/reconnect cycle
+    # and can be looked up by name in the second ray.init() session.
+    ray.init(namespace=NAMESPACE)
 
     @ray.remote
     class Counter:
@@ -47,6 +52,14 @@ def main() -> int:
         def value_(self) -> int:
             return self.value
 
+    # Kill any leftover actors from a previous run (idempotent test runs).
+    for i in range(n):
+        try:
+            old = ray.get_actor(f"rep64-actor-{i}", namespace=NAMESPACE)
+            ray.kill(old, no_restart=True)
+        except Exception:  # noqa: BLE001
+            pass
+
     actors = [
         Counter.options(name=f"rep64-actor-{i}", lifetime="detached").remote()
         for i in range(n)
@@ -58,14 +71,14 @@ def main() -> int:
     ray.shutdown()
     time.sleep(2)
 
-    # Reconnect.
-    ray.init()
+    # Reconnect to the same named namespace so we can find the detached actors.
+    ray.init(namespace=NAMESPACE)
 
     recovered = {}
     lost = []
     for name in snapshot:
         try:
-            a = ray.get_actor(name)
+            a = ray.get_actor(name, namespace=NAMESPACE)
             recovered[name] = ray.get(a.value_.remote())
         except Exception as e:  # noqa: BLE001
             lost.append((name, repr(e)))
