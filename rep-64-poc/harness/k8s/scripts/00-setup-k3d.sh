@@ -24,13 +24,13 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # 2. Create the k3d cluster if it doesn't exist (1 server + 1 agent — multi-node so head
 #    and workers can land on different nodes; matters for 30-pod-delete.sh authenticity).
-if ! k3d cluster list -o json | grep -q "\"name\": \"$K3D_CLUSTER_NAME\""; then
+if k3d cluster get "$K3D_CLUSTER_NAME" >/dev/null 2>&1; then
+  log "k3d cluster $K3D_CLUSTER_NAME already exists"
+else
   log "creating k3d cluster $K3D_CLUSTER_NAME (1 server + 1 agent)"
   k3d cluster create "$K3D_CLUSTER_NAME" \
     --servers 1 --agents 1 \
     --wait --timeout 180s
-else
-  log "k3d cluster $K3D_CLUSTER_NAME already exists"
 fi
 
 # 3. kubectl context is set by k3d; be explicit.
