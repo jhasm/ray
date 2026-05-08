@@ -48,10 +48,26 @@ kubectl wait --for=condition=Ready pod -n kube-system \
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
 # 6. Install KubeRay operator pinned to v1.6.0 (matches prod-ltx1-k8s-1).
+#    KubeRay v1.x distributes via Helm only — no single-yaml release asset on GitHub.
+if ! command -v helm >/dev/null && ! [[ -x "$HOME/.local/bin/helm" ]]; then
+  log "installing helm v3.16.1 to ~/.local/bin/helm"
+  TMPHELM="$(mktemp -d)"
+  curl -sfL -o "$TMPHELM/helm.tar.gz" \
+    https://get.helm.sh/helm-v3.16.1-linux-amd64.tar.gz
+  tar -xzf "$TMPHELM/helm.tar.gz" -C "$TMPHELM"
+  install -m 0755 "$TMPHELM/linux-amd64/helm" "$HOME/.local/bin/helm"
+  rm -rf "$TMPHELM"
+fi
+export PATH="$HOME/.local/bin:$PATH"
+
 if ! kubectl get deploy -n default kuberay-operator >/dev/null 2>&1; then
-  log "installing KubeRay operator v1.6.0"
-  kubectl apply --server-side -f \
-    "https://github.com/ray-project/kuberay/releases/download/v1.6.0/kuberay-operator.yaml"
+  log "installing KubeRay operator v1.6.0 via helm"
+  helm repo add kuberay https://ray-project.github.io/kuberay-helm/ 2>/dev/null || true
+  helm repo update kuberay >/dev/null
+  helm upgrade --install kuberay-operator kuberay/kuberay-operator \
+    --version 1.6.0 \
+    --namespace default \
+    --wait --timeout 5m
 fi
 kubectl rollout status deploy/kuberay-operator -n default --timeout=180s
 
