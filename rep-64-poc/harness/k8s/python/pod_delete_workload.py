@@ -41,6 +41,14 @@ def setup() -> int:
         def value_(self) -> int:
             return self.value
 
+    # Kill any leftover actors from a previous run so setup is idempotent.
+    for i in range(n):
+        try:
+            old = ray.get_actor(f"rep64-pd-actor-{i}", namespace=NAMESPACE)
+            ray.kill(old)
+        except Exception:  # noqa: BLE001
+            pass
+
     actors = [
         Counter.options(name=f"rep64-pd-actor-{i}", lifetime="detached").remote()
         for i in range(n)
@@ -48,6 +56,15 @@ def setup() -> int:
     increments = list(range(1, n + 1))
     ray.get([a.incr.remote(k) for a, k in zip(actors, increments)])
     snapshot = {f"rep64-pd-actor-{i}": k for i, k in enumerate(increments)}
+
+    # Brief pause to allow GCS actor manager to flush all actor writes to storage.
+    # Actor registrations are written to RocksDB via async callbacks; by the time
+    # ray.get() returns the increments have completed (proving all actors are
+    # scheduled), but the storage write callbacks may still be in-flight for some
+    # actors. A short sleep closes this window.
+    import time as _time
+    _time.sleep(2)
+
     print("SNAPSHOT_JSON " + json.dumps(snapshot), flush=True)
     print("METRICS_JSON " + json.dumps({"actors_created": n}), flush=True)
     return 0

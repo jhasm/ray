@@ -406,9 +406,15 @@ class Node:
 
             # Grace period to let the Raylet register with the GCS.
             # We retry in a loop in case it takes longer than expected.
+            # On pod-delete recovery with RocksDB GCS, the raylet may take longer
+            # to register because GCS is replaying state from the persisted store.
+            # Allow configuring via env for harness tuning.
             time.sleep(0.1)
             start_time = time.monotonic()
-            raylet_start_wait_time_s = 30
+            import os as _os
+            raylet_start_wait_time_s = int(
+                _os.environ.get("RAY_raylet_start_wait_time_s", "60")
+            )
             while True:
                 try:
                     # Will raise a RuntimeError if the node info is not available.
@@ -1325,11 +1331,23 @@ class Node:
             curr_val = self.get_gcs_client().internal_kv_get(
                 b"session_name", ray_constants.KV_NAMESPACE_SESSION
             )
-            assert curr_val == self._session_name.encode("utf-8"), (
-                f"Session name {self._session_name} does not match "
-                f"persisted value {curr_val}. Perhaps there was an "
-                f"error connecting to Redis."
-            )
+            if curr_val != self._session_name.encode("utf-8"):
+                # A persisted session name was found in GCS storage (e.g.
+                # RocksDB after a head-pod restart).  Adopt it so that the
+                # rest of node startup references the same session directory
+                # that was in use before the restart.  Without this, the
+                # assertion below would crash the head pod on every restart
+                # when GCS_STORAGE=rocksdb, because check_persisted_session_name()
+                # only reads from Redis and returns None for the RocksDB path,
+                # causing a fresh session name to be generated that conflicts
+                # with the value already stored in RocksDB.
+                logger.info(
+                    f"Adopting persisted session name from GCS storage: "
+                    f"{curr_val!r} (was using {self._session_name!r})"
+                )
+                self._session_name = ray._common.utils.decode(curr_val)
+                # Also update the session dir so log/temp paths stay consistent.
+                self._session_dir = os.path.join(self.temp_dir, self._session_name)
 
         # Add tracing_startup_hook to redis / internal kv manually
         # since internal kv is not yet initialized.

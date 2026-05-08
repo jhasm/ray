@@ -22,6 +22,8 @@ spec:
                 value: "/data/gcs"
               - name: RAY_gcs_rpc_server_reconnect_timeout_s
                 value: "60"
+              - name: RAY_raylet_start_wait_time_s
+                value: "120"
             resources:
               requests:
                 cpu: "${HEAD_CPU}"
