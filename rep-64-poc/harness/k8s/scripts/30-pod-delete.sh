@@ -188,18 +188,41 @@ teardown_cluster() {
 }
 
 # ---------------------------------------------------------------------------
+# run_backend_with_fallback: subshell-wraps run_backend so an abort inside
+# (e.g. head pod doesn't reach Ready in time) doesn't skip downstream
+# backends.  Writes a fail-stub result envelope so aggregate.py still has
+# a row for the failed test instead of silently missing it.
+# ---------------------------------------------------------------------------
+run_backend_with_fallback() {
+  local backend="$1" test_name="$2"
+  local start_ts duration
+  start_ts=$(date +%s)
+  if ( run_backend "$backend" "$test_name" ); then
+    return 0
+  fi
+  duration=$(( $(date +%s) - start_ts ))
+  log "WARN: run_backend $backend aborted; writing fail-stub result"
+  write_result "$test_name" fail "$duration" \
+    "$(jq -n --arg b "$backend" \
+      '{backend: $b, aborted: true, reason: "run_backend aborted before write_result"}')"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-# Always run the rocksdb backend.
-run_backend rocksdb 30-pod-delete
+# rocksdb and memory backends are independent measurements — failure of
+# one does not block the other from running.  || true keeps the script
+# alive past either backend's failure.
+run_backend_with_fallback rocksdb 30-pod-delete || true
 
 # Optionally run the inmem baseline.
 if [[ "${BASELINE_INMEM:-0}" == "1" ]]; then
   log "BASELINE_INMEM=1 — running inmem (memory) baseline"
   teardown_cluster
   # GCS_STORAGE value must be "memory" (not "inmem") to match the C++ kInMemoryStorage constant.
-  run_backend memory 30-pod-delete.inmem
+  run_backend_with_fallback memory 30-pod-delete.inmem || true
 
   # Restore rocksdb cluster so subsequent tasks (D1+) have a working cluster.
   # KubeRay does NOT recreate head pods on PodTemplate changes alone — it only
@@ -211,7 +234,7 @@ if [[ "${BASELINE_INMEM:-0}" == "1" ]]; then
   export GCS_STORAGE=rocksdb
   render_manifest "$HERE/../manifests/raycluster.yaml.tmpl" | kubectl apply -f -
   wait_ray_ready "$NAMESPACE" "$CLUSTER_NAME" "$DEPLOY_TIMEOUT_S" \
-    || abort "RayCluster did not reach Ready after rocksdb restore"
+    || log "WARN: RayCluster did not reach Ready after rocksdb restore (downstream tests may fail)"
   log "rocksdb cluster restored"
 fi
 
