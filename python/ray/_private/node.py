@@ -411,9 +411,8 @@ class Node:
             # Allow configuring via env for harness tuning.
             time.sleep(0.1)
             start_time = time.monotonic()
-            import os as _os
             raylet_start_wait_time_s = int(
-                _os.environ.get("RAY_raylet_start_wait_time_s", "60")
+                os.environ.get("RAY_raylet_start_wait_time_s", "60")
             )
             while True:
                 try:
@@ -461,6 +460,26 @@ class Node:
             self._record_stats()
 
     def check_persisted_session_name(self):
+        # rep-64 POC: when RAY_gcs_storage=rocksdb, read the session_name
+        # sidecar file written by the previous head pod (see node.py around
+        # the internal_kv_put session_name call).  GCS isn't up yet at this
+        # point in startup, so we can't query the rocksdb-backed internal_kv
+        # directly; the sidecar bridges that gap.  Falls through to the Redis
+        # path below for non-rocksdb deployments.
+        if os.environ.get("RAY_gcs_storage") == "rocksdb":
+            rocksdb_storage_path = os.environ.get("RAY_gcs_storage_path")
+            if rocksdb_storage_path:
+                session_name_file = os.path.join(
+                    rocksdb_storage_path, ".session_name"
+                )
+                try:
+                    with open(session_name_file, "rb") as f:
+                        persisted = f.read().strip()
+                        return persisted if persisted else None
+                except FileNotFoundError:
+                    return None
+            return None
+
         if self._ray_params.external_addresses is None:
             return None
         self._redis_address = self._ray_params.external_addresses[0]
@@ -1331,23 +1350,33 @@ class Node:
             curr_val = self.get_gcs_client().internal_kv_get(
                 b"session_name", ray_constants.KV_NAMESPACE_SESSION
             )
-            if curr_val != self._session_name.encode("utf-8"):
-                # A persisted session name was found in GCS storage (e.g.
-                # RocksDB after a head-pod restart).  Adopt it so that the
-                # rest of node startup references the same session directory
-                # that was in use before the restart.  Without this, the
-                # assertion below would crash the head pod on every restart
-                # when GCS_STORAGE=rocksdb, because check_persisted_session_name()
-                # only reads from Redis and returns None for the RocksDB path,
-                # causing a fresh session name to be generated that conflicts
-                # with the value already stored in RocksDB.
-                logger.info(
-                    f"Adopting persisted session name from GCS storage: "
-                    f"{curr_val!r} (was using {self._session_name!r})"
+            assert curr_val == self._session_name.encode("utf-8"), (
+                f"Session name {self._session_name} does not match "
+                f"persisted value {curr_val}. Perhaps there was an "
+                f"error connecting to Redis."
+            )
+
+        # rep-64 POC: persist session_name to a sidecar file when using rocksdb
+        # GCS, so check_persisted_session_name() can find it on head-pod
+        # restart.  RocksDB-backed internal_kv requires the GCS to be up, but
+        # check_persisted_session_name() runs before GCS comes up on restart;
+        # the sidecar bridges that gap without depending on Redis.  Gated on
+        # RAY_gcs_storage=rocksdb so non-POC deployments are unaffected.
+        if os.environ.get("RAY_gcs_storage") == "rocksdb":
+            rocksdb_storage_path = os.environ.get("RAY_gcs_storage_path")
+            if rocksdb_storage_path:
+                session_name_file = os.path.join(
+                    rocksdb_storage_path, ".session_name"
                 )
-                self._session_name = ray._common.utils.decode(curr_val)
-                # Also update the session dir so log/temp paths stay consistent.
-                self._session_dir = os.path.join(self.temp_dir, self._session_name)
+                try:
+                    os.makedirs(rocksdb_storage_path, exist_ok=True)
+                    with open(session_name_file, "wb") as f:
+                        f.write(self._session_name.encode("utf-8"))
+                except OSError as e:
+                    logger.warning(
+                        f"Failed to persist session_name sidecar to "
+                        f"{session_name_file}: {e}"
+                    )
 
         # Add tracing_startup_hook to redis / internal kv manually
         # since internal kv is not yet initialized.
