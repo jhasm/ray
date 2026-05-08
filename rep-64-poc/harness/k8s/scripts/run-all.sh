@@ -92,7 +92,12 @@ if (( ! SKIP_SETUP )); then
       fi
       ;;
     remote)
-      skip_step "00-setup" "remote tier: cluster bring-up is out of harness scope"
+      if [[ -x "$HERE/00-check-remote.sh" ]]; then
+        run_step "00-check-remote" required "$HERE/00-check-remote.sh" \
+          || { log "fatal: remote preflight failed"; exit 1; }
+      else
+        skip_step "00-check-remote" "script missing"
+      fi
       ;;
     *)
       log "WARN: unknown tier '$TIER' — assuming cluster already exists"
