@@ -411,8 +411,11 @@ class Node:
             # Allow configuring via env for harness tuning.
             time.sleep(0.1)
             start_time = time.monotonic()
+            default_wait = (
+                "60" if os.environ.get("RAY_gcs_storage") == "rocksdb" else "30"
+            )
             raylet_start_wait_time_s = int(
-                os.environ.get("RAY_raylet_start_wait_time_s", "60")
+                os.environ.get("RAY_raylet_start_wait_time_s", default_wait)
             )
             while True:
                 try:
